@@ -1,0 +1,42 @@
+[package]
+name = "symjit"
+version = "2.12.0"
+edition = "2021"
+authors = ["Shahriar Iravanian <siravan@svtsim.com>"]
+license = "MIT"
+readme = "README.md"
+description = "a lightweight just-in-time (JIT) optimizer compiler"
+repository = "https://github.com/siravan/symjit"
+keywords = ["compiler", "JIT", "computer-algebra"]
+categories = ["compilers", "hardware-support", "mathematics"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+memmap2 = { version = "0.9", optional = true }
+anyhow = "1"
+libc = "0.2"
+region = "3.0.2"
+wasmtime-jit-icache-coherence = "34.0"
+rayon = "1.1"
+spec_math = "0.1.6"
+petgraph= "0.8.3"
+hashbrown = "0.16.0"
+num-complex = "0.4.6"
+symbolica = { version = "1.2", features = ["serde"] }
+ahash = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Memory"] }
+
+[features]
+selinux-fix = ["memmap2"]
+default = []
+
+[lib]
+path = "rust/lib.rs"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "symjit"
+path = "rust/bin.rs"
