@@ -1,6 +1,6 @@
 [package]
 name = "symjit"
-version = "2.13.4"
+version = "2.13.5"
 edition = "2021"
 authors = ["Shahriar Iravanian <siravan@svtsim.com>"]
 license = "MIT"
@@ -23,7 +23,7 @@ spec_math = "0.1.6"
 petgraph= "0.8.3"
 hashbrown = "0.16.0"
 num-complex = "0.4.6"
-symbolica = { version = "1.4", features = ["serde"] }
+symbolica = { version = "1.4", features = ["serde"], optional = true }
 ahash = "0.8"
 rand= "0.9"
 wide = "0.8"
@@ -34,6 +34,7 @@ windows-sys = { version = "0.61", features = ["Win32_System_Memory"] }
 [features]
 selinux-fix = ["memmap2"]
 default = []
+testing = ["dep:symbolica"]
 
 [lib]
 path = "rust/lib.rs"
