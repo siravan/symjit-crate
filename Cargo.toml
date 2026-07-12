@@ -11,6 +11,10 @@ keywords = ["compiler", "JIT", "computer-algebra"]
 categories = ["compilers", "hardware-support", "mathematics"]
 publish = true
 
+[profile.profiling]
+inherits = "release"
+debug = true
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -21,9 +25,10 @@ region = "3.0.2"
 wasmtime-jit-icache-coherence = "34.0"
 rayon = "1.1"
 spec_math = "0.1.6"
-petgraph= "0.8.3"
+# petgraph= "0.8.3"
 hashbrown = "0.16.0"
 num-complex = "0.4.6"
+num-traits = "0.2"
 ahash = "0.8"
 rand= "0.9"
 wide = "1.1"
