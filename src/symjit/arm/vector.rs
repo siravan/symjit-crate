@@ -1,0 +1,869 @@
+use anyhow::{anyhow, Result};
+
+use super::super::assembler::{Assembler, Jumper};
+use super::super::code::Func;
+use super::super::config::{Config, ABI_AREA};
+use super::super::generator::{FuncletType, Generator, StackRegions};
+use super::super::symbol::Loc;
+use super::super::utils::{align_stack, is_external_func, Reg};
+
+use super::*;
+
+const REG_SIZE: u32 = 16;
+
+pub struct ArmSimdGenerator {
+    a: Assembler,
+    config: Config,
+}
+
+impl ArmSimdGenerator {
+    pub fn new(config: Config) -> ArmSimdGenerator {
+        ArmSimdGenerator {
+            a: Assembler::new(),
+            config,
+        }
+    }
+
+    pub fn jump(&mut self, label: &str, code: u32, f: Jumper) {
+        self.a.jump(label, code, f)
+    }
+
+    pub fn jump_abs(&mut self, label: &str, code: u32, f: Jumper) {
+        self.a.jump_abs(label, code, f);
+    }
+
+    pub fn ip(&self) -> usize {
+        self.a.ip()
+    }
+
+    fn apply_jumps(&mut self) {
+        self.a.apply_jumps();
+    }
+
+    fn emit(&mut self, w: u32) {
+        self.a.append_word(w);
+    }
+
+    fn call_external(&mut self, op: &str, num_args: usize) -> Result<()> {
+        let label = format!("_simd_{}_", op);
+        load_long(&mut self.a, CALL, &label);
+
+        let ofs = ABI_AREA as u32 * REG_SIZE;
+
+        load_x_from_label(&mut self.a, 0, &format!("_env_{}_", op));
+        self.emit(arm! {add x(1), x(SP), #ofs});
+        self.emit(arm! {movz x(2), #num_args});
+        self.emit(arm! {add x(3), x(SP), #0});
+
+        self.emit(arm! {blr x(CALL)});
+
+        if self.config.is_complex() {
+            self.emit(arm! {tst x(0), x(0)});
+            let l1 = self.a.create_label();
+            self.jump(&l1, 0, |offset, _| arm! {b.eq label(offset)});
+            self.emit(arm! {ldr q(2), [sp, #0]});
+            self.emit(arm! {ldr q(3), [sp, #16]});
+            self.emit(arm! {uzp1 q(0), q(2), q(3)});
+            self.emit(arm! {uzp2 q(1), q(2), q(3)});
+            let l2 = self.a.create_label();
+            self.branch(&l2);
+            self.set_label(&l1);
+            self.emit(arm! {ldr q(0), [sp, #0]});
+            self.emit(arm! {ldr q(1), [sp, #16]});
+            self.set_label(&l2);
+        } else {
+            self.emit(arm! {ldr q(0), [sp, #0]});
+        }
+
+        Ok(())
+    }
+
+    fn sub_stack(&mut self, size: u32) {
+        self.emit(arm! {sub sp, sp, #size & 0x0fff});
+        if size >> 12 != 0 {
+            self.emit(arm! {sub sp, sp, #size >> 12, lsl #12});
+        }
+    }
+
+    /*
+    fn add_stack(&mut self, size: u32) {
+        if size >> 12 != 0 {
+            self.emit(arm! {add sp, sp, #size >> 12, lsl #12});
+        }
+        self.emit(arm! {add sp, sp, #size & 0x0fff});
+    }
+    */
+
+    fn find_temp(s1: Reg, s2: Reg) -> Reg {
+        if s1 != Reg::Temp && s2 != Reg::Temp {
+            Reg::Temp
+        } else if s1 != Reg::Gen(2) && s2 != Reg::Gen(2) {
+            Reg::Gen(2)
+        } else if s1 != Reg::Gen(3) && s2 != Reg::Gen(3) {
+            Reg::Gen(3)
+        } else {
+            panic!("cannot find a temporary register");
+        }
+    }
+}
+
+impl Generator for ArmSimdGenerator {
+    fn bytes(&mut self) -> Vec<u8> {
+        self.a.bytes()
+    }
+
+    fn three_address(&self) -> bool {
+        true
+    }
+
+    fn count_shadows(&self) -> u8 {
+        14
+    }
+
+    fn support_funclet(&self) -> FuncletType {
+        FuncletType::Complex
+    }
+
+    fn seal(&mut self) {
+        self.apply_jumps();
+    }
+
+    fn align(&mut self) {
+        if self.a.ip() & 7 != 0 {
+            self.emit(arm! {nop});
+        }
+    }
+
+    fn set_label(&mut self, label: &str) {
+        self.a.set_label(label);
+    }
+
+    fn branch(&mut self, label: &str) {
+        self.jump(label, 0, |offset, _| arm! {b label(offset)});
+    }
+
+    fn branch_if(&mut self, cond: Reg, label: &str, is_else: bool) {
+        self.emit(arm! {umov x(1), v(ϕ(cond)).d[0]});
+        self.emit(arm! {umov x(2), v(ϕ(cond)).d[1]});
+        self.emit(arm! {eor x(0), x(1), x(2)});
+
+        if !self.config.simd_branch() {
+            // throw an exception if the lanes are not coincidental (x0 == 1)
+            let l1 = self.a.create_label();
+            self.jump(&l1, 0, |offset, _| arm! {tbz x(0), #0, label(offset)});
+            self.branch("@epilogue");
+            self.set_label(&l1);
+        }
+
+        let l = self.a.create_label();
+
+        if is_else {
+            // run the else-clasue if
+            // 1. the lanes are not coincidental (x0 == 1), or,
+            // 2. the lanes are coincidental but non-zero (x0 == 0, x1 == 1, x2 == 1).
+            self.emit(arm! {orn x(0), x(0), x(1)});
+            self.jump(&l, 0, |offset, _| arm! {tbnz x(0), #0, label(offset)});
+        } else {
+            // run the then-clasue if
+            // 1. the lanes are not coincidental (x0 == 1), or,
+            // 2. the lanes are coincidental but zero (x0 == 0, x1 == 0, x2 == 0).
+            self.emit(arm! {orr x(0), x(0), x(1)});
+            self.jump(&l, 0, |offset, _| arm! {tbnz x(0), #0, label(offset)});
+        }
+
+        self.branch(label);
+        self.set_label(&l);
+    }
+
+    fn fuse_load_math(&mut self) {}
+
+    //***********************************
+
+    fn fmov(&mut self, dst: Reg, s1: Reg) {
+        if dst == s1 {
+            return;
+        }
+
+        self.emit(arm! {fmov q(ϕ(dst)), q(ϕ(s1))});
+        //self.emit(arm! {orr v(ϕ(dst)).8b, v(ϕ(s1)).8b, v(ϕ(s1)).8b});
+    }
+
+    fn fxchg(&mut self, s1: Reg, s2: Reg) {
+        self.emit(arm! {eor v(ϕ(s1)).16b, v(ϕ(s1)).16b, v(ϕ(s2)).16b});
+        self.emit(arm! {eor v(ϕ(s2)).16b, v(ϕ(s1)).16b, v(ϕ(s2)).16b});
+        self.emit(arm! {eor v(ϕ(s1)).16b, v(ϕ(s1)).16b, v(ϕ(s2)).16b});
+    }
+
+    fn load_const(&mut self, dst: Reg, idx: u32) {
+        let label = format!("_const_{}_", idx);
+        self.jump_abs(&label, (self.ip() & 0xfffff000) as u32, |offset, pg| {
+            arm! {adrp x(0), label((offset - pg as i32) as u32)}
+        });
+
+        self.jump_abs(
+            &label,
+            0,
+            |offset, _| arm! {add x(0), x(0), #offset & 0x0fff},
+        );
+
+        self.emit(arm! {ld1r {q(ϕ(dst))}, [x(0)]});
+    }
+
+    fn load_mem(&mut self, dst: Reg, idx: u32) {
+        load_q_from_mem(&mut self.a, ϕ(dst), MEM, idx);
+    }
+
+    fn save_mem(&mut self, dst: Reg, idx: u32) {
+        save_q_to_mem(&mut self.a, ϕ(dst), MEM, idx);
+    }
+
+    fn save_mem_result(&mut self, idx: u32) {
+        self.save_mem(Reg::Ret, idx);
+    }
+
+    fn load_param(&mut self, dst: Reg, idx: u32) {
+        if self.config.symbolica() {
+            load_q_from_mem(&mut self.a, ϕ(dst), PARAMS, idx);
+        } else {
+            load_d_from_mem(&mut self.a, ϕ(dst), PARAMS, idx);
+            self.emit(arm! {dup q(ϕ(dst)), q(ϕ(dst))[0]});
+        }
+    }
+
+    fn load_stack(&mut self, dst: Reg, idx: u32) {
+        load_q_from_mem(&mut self.a, ϕ(dst), SP, idx);
+    }
+
+    fn save_stack(&mut self, dst: Reg, idx: u32) {
+        save_q_to_mem(&mut self.a, ϕ(dst), SP, idx);
+    }
+
+    fn load_mem_complex(&mut self, xd: Reg, yd: Reg, idx: u32) {
+        load_paired_q_from_mem(&mut self.a, ϕ(xd), ϕ(yd), MEM, idx);
+    }
+
+    fn save_mem_complex(&mut self, xs: Reg, ys: Reg, idx: u32) {
+        save_paired_q_to_mem(&mut self.a, ϕ(xs), ϕ(ys), MEM, idx);
+    }
+
+    fn load_param_complex(&mut self, xd: Reg, yd: Reg, idx: u32) {
+        if self.config.symbolica() {
+            load_paired_q_from_mem(&mut self.a, ϕ(xd), ϕ(yd), PARAMS, idx);
+        } else {
+            self.load_param(xd, idx);
+            self.load_param(yd, idx + 1);
+        }
+    }
+
+    fn load_stack_complex(&mut self, xd: Reg, yd: Reg, idx: u32) {
+        // self.load_stack(xd, idx);
+        // self.load_stack(yd, idx + 1);
+        load_paired_q_from_mem(&mut self.a, ϕ(xd), ϕ(yd), STACK, idx);
+    }
+
+    fn save_stack_complex(&mut self, xs: Reg, ys: Reg, idx: u32) {
+        // self.save_stack(xs, idx);
+        // self.save_stack(ys, idx + 1);
+        save_paired_q_to_mem(&mut self.a, ϕ(xs), ϕ(ys), STACK, idx);
+    }
+
+    fn save_stack_result(&mut self, idx: u32) {
+        self.save_stack(Reg::Ret, idx);
+    }
+
+    fn neg(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fneg q(ϕ(dst)), q(ϕ(s1))});
+    }
+
+    fn abs(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fabs q(ϕ(dst)), q(ϕ(s1))});
+    }
+
+    fn root(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fsqrt q(ϕ(dst)), q(ϕ(s1))});
+    }
+
+    fn real_root(&mut self, dst: Reg, s1: Reg) {
+        self.root(dst, s1);
+    }
+
+    fn recip(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fmov q(TEMP), #1.0});
+        self.emit(arm! {fdiv q(ϕ(dst)), q(TEMP), q(ϕ(s1))});
+    }
+
+    fn half(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fmov q(TEMP), #0.5});
+        self.emit(arm! {fmul q(ϕ(dst)), q(ϕ(s1)), q(TEMP)});
+    }
+
+    fn round(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {frinti q(ϕ(dst)), q(ϕ(s1))});
+    }
+
+    fn floor(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {frintm q(ϕ(dst)), q(ϕ(s1))});
+    }
+
+    fn ceiling(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {frintp q(ϕ(dst)), q(ϕ(s1))});
+    }
+
+    fn trunc(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {frintz q(ϕ(dst)), q(ϕ(s1))});
+    }
+
+    fn frac(&mut self, dst: Reg, s1: Reg) {
+        self.floor(Reg::Temp, s1);
+        self.minus(dst, s1, Reg::Temp);
+    }
+
+    fn plus(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fadd q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+    }
+
+    fn minus(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fsub q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+    }
+
+    fn times(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fmul q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+    }
+
+    fn divide(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fdiv q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+    }
+
+    fn times_complex(&mut self, xd: Reg, yd: Reg, x1: Reg, y1: Reg, x2: Reg, y2: Reg) -> bool {
+        let xt = Reg::Gen(2);
+        let yt = Reg::Gen(3);
+
+        if xd != x1 && xd != x2 {
+            self.times(xd, x1, x2); // xt := x1 * x2
+            self.emit(arm! {fmls q(ϕ(xd)), q(ϕ(y1)), q(ϕ(y2))}); // xt := x1 * x2 - y1 * y2
+            self.times(yd, x1, y2); // yt := x1 * y2
+            self.emit(arm! {fmla q(ϕ(yd)), q(ϕ(x2)), q(ϕ(y1))}); // xt := x1 * y2 + x2 * y1
+        } else if xd == x1 && xd != x2 {
+            self.times(xt, x1, x2); // xt := x1 * x2
+            self.emit(arm! {fmls q(ϕ(xt)), q(ϕ(y1)), q(ϕ(y2))}); // xt := x1 * x2 - y1 * y2
+            self.times(yd, x2, y1); // yt := x1 * y2
+            self.emit(arm! {fmla q(ϕ(yd)), q(ϕ(x1)), q(ϕ(y2))}); // xt := x1 * y2 + x2 * y1
+            self.fmov(xd, xt);
+        } else if xd != x1 && xd == x2 {
+            self.times(xt, x1, x2); // xt := x1 * x2
+            self.emit(arm! {fmls q(ϕ(xt)), q(ϕ(y1)), q(ϕ(y2))}); // xt := x1 * x2 - y1 * y2
+            self.times(yd, x1, y2); // yt := x1 * y2
+            self.emit(arm! {fmla q(ϕ(yd)), q(ϕ(x2)), q(ϕ(y1))}); // xt := x1 * y2 + x2 * y1
+            self.fmov(xd, xt);
+        } else {
+            // xd == x1 && xd == x2
+            self.times(xt, x1, x2); // xt := x1 * x2
+            self.emit(arm! {fmls q(ϕ(xt)), q(ϕ(y1)), q(ϕ(y2))}); // xt := x1 * x2 - y1 * y2
+            self.times(yt, x1, y2); // yt := x1 * y2
+            self.emit(arm! {fmla q(ϕ(yt)), q(ϕ(x2)), q(ϕ(y1))}); // xt := x1 * y2 + x2 * y1
+            self.fmov(xd, xt);
+            self.fmov(yd, yt);
+        }
+
+        true
+    }
+
+    fn divide_complex(&mut self, xd: Reg, yd: Reg, x1: Reg, y1: Reg, x2: Reg, y2: Reg) -> bool {
+        let xt = Reg::Gen(2);
+        let yt = Reg::Gen(3);
+        let t = Reg::Temp;
+
+        self.times(xt, x1, x2);
+        self.emit(arm! {fmla q(ϕ(xt)), q(ϕ(y1)), q(ϕ(y2))}); // xt := x1 * x2 + y1 * y2
+        self.times(yt, x2, y1);
+        self.emit(arm! {fmls q(ϕ(yt)), q(ϕ(x1)), q(ϕ(y2))}); // yt := x2 * y1 - x1 * y2
+        self.times(t, x2, x2);
+        self.emit(arm! {fmla q(ϕ(t)), q(ϕ(y2)), q(ϕ(y2))}); // t := x2 * x2 + y2 * y2
+        self.divide(xd, xt, t);
+        self.divide(yd, yt, t);
+        true
+    }
+
+    fn support_times2(&self) -> bool {
+        false
+    }
+
+    fn times2_loc(&mut self, _d1: Reg, _s1: Reg, _l1: Loc, _d2: Reg, _s2: Reg, _l2: Loc) {
+        unreachable!()
+    }
+
+    fn real(&mut self, dst: Reg, s1: Reg) {
+        self.fmov(dst, s1);
+    }
+
+    fn imaginary(&mut self, dst: Reg, _s1: Reg) {
+        self.xor(dst, dst, dst);
+    }
+
+    fn conjugate(&mut self, dst: Reg, s1: Reg) {
+        self.fmov(dst, s1);
+    }
+
+    fn complex(&mut self, dst: Reg, s1: Reg, _s2: Reg) {
+        self.fmov(dst, s1);
+    }
+
+    fn gt(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fcmgt q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+    }
+
+    fn geq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fcmge q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+    }
+
+    fn lt(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fcmlt q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+    }
+
+    fn leq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fcmle q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+    }
+
+    fn eq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fcmeq q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+    }
+
+    fn neq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {fcmeq q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+        self.emit(arm! {not v(ϕ(dst)).16b, v(ϕ(dst)).16b});
+    }
+
+    fn and(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {and v(ϕ(dst)).16b, v(ϕ(s1)).16b, v(ϕ(s2)).16b});
+    }
+
+    fn andnot(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {bic v(ϕ(dst)).16b, v(ϕ(s1)).16b, v(ϕ(s2)).16b});
+    }
+
+    fn or(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.emit(arm! {orr v(ϕ(dst)).16b, v(ϕ(s1)).16b, v(ϕ(s2)).16b});
+    }
+
+    fn xor(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        if s1 == s2 {
+            self.emit(arm! {movi q(ϕ(dst)), #0});
+        } else {
+            self.emit(arm! {eor v(ϕ(dst)).16b, v(ϕ(s1)).16b, v(ϕ(s2)).16b});
+        }
+    }
+
+    fn not(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {not v(ϕ(dst)).16b, v(ϕ(s1)).16b});
+    }
+
+    fn fused_mul_add(&mut self, dst: Reg, s1: Reg, s2: Reg, s3: Reg) {
+        if dst == s3 {
+            self.emit(arm! {fmla q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+        } else if s1 != dst && s2 != dst {
+            self.emit(arm! {fmov q(ϕ(dst)), q(ϕ(s3))});
+            self.emit(arm! {fmla q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+        } else {
+            let t = Self::find_temp(s1, s2);
+            self.emit(arm! {fmov q(ϕ(t)), q(ϕ(s3))});
+            self.emit(arm! {fmla q(ϕ(t)), q(ϕ(s1)), q(ϕ(s2))});
+            self.emit(arm! {fmov q(ϕ(dst)), q(ϕ(t))});
+        }
+    }
+
+    // fused_mul_sub is s1 * s2 - s3, corresponding to fnmsub in aarch64
+    // and vmsub... in amd64
+    fn fused_mul_sub(&mut self, dst: Reg, s1: Reg, s2: Reg, s3: Reg) {
+        if s1 != dst && s2 != dst {
+            self.emit(arm! {fneg q(ϕ(dst)), q(ϕ(s3))});
+            self.emit(arm! {fmla q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+        } else {
+            let t = Self::find_temp(s1, s2);
+            self.emit(arm! {fneg q(ϕ(t)), q(ϕ(s3))});
+            self.emit(arm! {fmla q(ϕ(t)), q(ϕ(s1)), q(ϕ(s2))});
+            self.emit(arm! {fmov q(ϕ(dst)), q(ϕ(t))});
+        }
+    }
+
+    // fused_neg_mul_add is s3 - s1 * s2, corresponding to fmsub in aarch64
+    // and vnmadd... in amd64
+    fn fused_neg_mul_add(&mut self, dst: Reg, s1: Reg, s2: Reg, s3: Reg) {
+        assert!(s1 != Reg::Temp && s2 != Reg::Temp);
+        if dst == s3 {
+            self.emit(arm! {fmls q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+        } else if s1 != dst && s2 != dst {
+            self.emit(arm! {fmov q(ϕ(dst)), q(ϕ(s3))});
+            self.emit(arm! {fmls q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+        } else {
+            let t = Self::find_temp(s1, s2);
+            self.emit(arm! {fmov q(ϕ(t)), q(ϕ(s3))});
+            self.emit(arm! {fmls q(ϕ(t)), q(ϕ(s1)), q(ϕ(s2))});
+            self.emit(arm! {fmov q(ϕ(dst)), q(ϕ(t))});
+        }
+    }
+
+    // fused_neg_mul_sub is -s3 - s1 * s2, corresponding to fnmadd in aarch64
+    // and vnmsub... in amd64
+    fn fused_neg_mul_sub(&mut self, dst: Reg, s1: Reg, s2: Reg, s3: Reg) {
+        if s1 != dst && s2 != dst {
+            self.emit(arm! {fneg q(ϕ(dst)), q(ϕ(s3))});
+            self.emit(arm! {fmls q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+        } else {
+            let t = Self::find_temp(s1, s2);
+            self.emit(arm! {fneg q(ϕ(t)), q(ϕ(s3))});
+            self.emit(arm! {fmls q(ϕ(t)), q(ϕ(s1)), q(ϕ(s2))});
+            self.emit(arm! {fmov q(ϕ(dst)), q(ϕ(t))});
+        }
+    }
+
+    fn add_consts(&mut self, consts: &[f64]) {
+        self.align();
+        add_consts(&mut self.a, consts)
+    }
+
+    fn add_func(&mut self, op: &str, f: Func) {
+        add_func(&mut self.a, op, f);
+    }
+
+    fn call(&mut self, op: &str, num_args: usize) -> Result<()> {
+        if is_external_func(op) {
+            return self.call_external(op, num_args);
+        }
+
+        let label = format!("_func_{}_", op);
+        load_long(&mut self.a, CALL, &label);
+
+        match num_args {
+            1 => {
+                // self.emit(arm! {sub sp, sp, #16});
+                self.emit(arm! {str q(0), [sp, #0]});
+
+                self.emit(arm! {blr x(CALL)});
+                self.emit(arm! {str d(0), [sp, #0]});
+
+                self.emit(arm! {ldr d(0), [sp, #8]});
+                self.emit(arm! {blr x(CALL)});
+                self.emit(arm! {str d(0), [sp, #8]});
+
+                self.emit(arm! {ldr q(0), [sp, #0]});
+                // self.emit(arm! {add sp, sp, #16});
+            }
+            2 => {
+                // self.emit(arm! {sub sp, sp, #32});
+                self.emit(arm! {str q(0), [sp, #0]});
+                self.emit(arm! {str q(1), [sp, #16]});
+
+                // self.emit(arm! {ldr d(0), [sp, #0]});
+                // self.emit(arm! {ldr d(1), [sp, #16]});
+                self.emit(arm! {blr x(CALL)});
+                self.emit(arm! {str d(0), [sp, #0]});
+
+                self.emit(arm! {ldr d(0), [sp, #8]});
+                self.emit(arm! {ldr d(1), [sp, #24]});
+                self.emit(arm! {blr x(CALL)});
+                self.emit(arm! {str d(0), [sp, #8]});
+
+                self.emit(arm! {ldr q(0), [sp, #0]});
+                // self.emit(arm! {add sp, sp, #32});
+            }
+            _ => return Err(anyhow!("invalid number of arguments")),
+        }
+
+        Ok(())
+    }
+
+    fn call_complex(&mut self, op: &str, num_args: usize) -> Result<()> {
+        let label = format!("_func_{}_", op);
+        //self.a
+        //    .jump(&label, 0, |offset, _code| arm! {ldr x(0), label(offset)});
+
+        self.jump_abs(&label, (self.ip() & 0xfffff000) as u32, |offset, pg| {
+            arm! {adrp x(CALL), label((offset - pg as i32) as u32)}
+        });
+
+        self.jump_abs(
+            &label,
+            0,
+            |offset, _| arm! {ldr x(CALL), [x(CALL), #offset & 0x0fff]},
+        );
+
+        match num_args {
+            1 => {
+                // self.emit(arm! {sub sp, sp, #32});
+                self.emit(arm! {str q(0), [sp, #0]});
+                self.emit(arm! {str q(1), [sp, #16]});
+
+                self.emit(arm! {add x(0), x(SP), #32});
+                self.emit(arm! {blr x(CALL)});
+                self.emit(arm! {ldr d(0), [sp, #32]});
+                self.emit(arm! {ldr d(1), [sp, #40]});
+                self.emit(arm! {str d(0), [sp, #0]});
+                self.emit(arm! {str d(1), [sp, #16]});
+
+                self.emit(arm! {ldr d(0), [sp, #8]});
+                self.emit(arm! {ldr d(1), [sp, #24]});
+                self.emit(arm! {add x(0), x(SP), #32});
+                self.emit(arm! {blr x(CALL)});
+                self.emit(arm! {ldr d(0), [sp, #32]});
+                self.emit(arm! {ldr d(1), [sp, #40]});
+                self.emit(arm! {str d(0), [sp, #8]});
+                self.emit(arm! {str d(1), [sp, #24]});
+
+                self.emit(arm! {ldr q(0), [sp, #0]});
+                self.emit(arm! {ldr q(1), [sp, #16]});
+                // self.emit(arm! {add sp, sp, #32});
+            }
+            2 => {
+                // self.emit(arm! {sub sp, sp, #64});
+                self.emit(arm! {str q(0), [sp, #0]});
+                self.emit(arm! {str q(1), [sp, #16]});
+                self.emit(arm! {str q(2), [sp, #32]});
+                self.emit(arm! {str q(3), [sp, #48]});
+
+                self.emit(arm! {str d(2), [sp, #64]});
+                self.emit(arm! {str d(3), [sp, #72]});
+                self.emit(arm! {add x(0), x(SP), #64});
+                self.emit(arm! {blr x(CALL)});
+                self.emit(arm! {ldr d(0), [sp, #64]});
+                self.emit(arm! {ldr d(1), [sp, #72]});
+                self.emit(arm! {str d(0), [sp, #0]});
+                self.emit(arm! {str d(1), [sp, #16]});
+
+                self.emit(arm! {ldr d(0), [sp, #8]});
+                self.emit(arm! {ldr d(1), [sp, #24]});
+                self.emit(arm! {ldr d(2), [sp, #40]});
+                self.emit(arm! {ldr d(3), [sp, #56]});
+                self.emit(arm! {str d(2), [sp, #64]});
+                self.emit(arm! {str d(3), [sp, #72]});
+                self.emit(arm! {add x(0), x(SP), #64});
+                self.emit(arm! {blr x(CALL)});
+                self.emit(arm! {ldr d(0), [sp, #64]});
+                self.emit(arm! {ldr d(1), [sp, #72]});
+                self.emit(arm! {str d(0), [sp, #8]});
+                self.emit(arm! {str d(1), [sp, #24]});
+
+                self.emit(arm! {ldr q(0), [sp, #0]});
+                self.emit(arm! {ldr q(1), [sp, #16]});
+                // self.emit(arm! {add sp, sp, #64});
+            }
+            _ => return Err(anyhow!("invalid number of arguments")),
+        }
+
+        Ok(())
+    }
+
+    fn call_funclet(&mut self, label: &str) {
+        self.jump(label, 0, |offset, _| arm! {bl label(offset)});
+    }
+
+    fn ret(&mut self) {
+        self.emit(arm! {ret});
+    }
+
+    fn ifelse(&mut self, dst: Reg, true_val: Reg, false_val: Reg, idx: u32) {
+        if true_val == false_val {
+            self.fmov(dst, true_val);
+        } else if dst != true_val && dst != false_val {
+            self.load_stack(dst, idx);
+            self.emit(arm! {bsl v(ϕ(dst)).16b, v(ϕ(true_val)).16b, v(ϕ(false_val)).16b});
+        } else {
+            self.load_stack(Reg::Temp, idx);
+            self.emit(arm! {bsl v(TEMP).16b, v(ϕ(true_val)).16b, v(ϕ(false_val)).16b});
+            self.fmov(dst, Reg::Temp);
+        }
+    }
+
+    /**************************************************/
+
+    fn prologue_fast(&mut self, _cap: usize, _count_states: usize, _count_obs: usize) {
+        unreachable!()
+    }
+
+    fn epilogue_fast(
+        &mut self,
+        _cap: usize,
+        _count_states: usize,
+        _count_obs: usize,
+        _idx_ret: i32,
+    ) {
+        unreachable!()
+    }
+
+    fn prologue_indirect(
+        &mut self,
+        cap: usize,
+        count_states: usize,
+        count_obs: usize,
+        count_params: usize,
+    ) {
+        let regions = StackRegions::new(cap, count_states, count_obs, count_params);
+
+        if self.config.symbolica() {
+            self.prologue_symbolica(&regions)
+        } else {
+            self.prologue_sympy(&regions)
+        }
+    }
+
+    fn epilogue_indirect(
+        &mut self,
+        cap: usize,
+        count_states: usize,
+        count_obs: usize,
+        count_params: usize,
+    ) {
+        let regions = StackRegions::new(cap, count_states, count_obs, count_params);
+
+        if self.config.symbolica() {
+            self.epilogue_symbolica(&regions)
+        } else {
+            self.epilogue_sympy(&regions)
+        }
+    }
+
+    fn save_used_registers(&mut self, used: &[Reg]) {
+        for r in used {
+            let phys_reg = ϕ(*r);
+            if (8..=15).contains(&phys_reg) {
+                self.save_stack(*r, phys_reg as u32);
+            }
+        }
+    }
+
+    fn load_used_registers(&mut self, used: &[Reg]) {
+        for r in used {
+            let phys_reg = ϕ(*r);
+            if (8..=15).contains(&phys_reg) {
+                self.load_stack(*r, phys_reg as u32);
+            }
+        }
+    }
+}
+
+impl ArmSimdGenerator {
+    fn prologue_sympy(&mut self, regions: &StackRegions) {
+        save_nonvolatile_regs(&mut self.a);
+
+        self.emit(arm! {tst x(STATES), x(STATES)});
+        self.jump("@main", 0, |offset, _| arm! {b.eq label(offset)});
+
+        let frame_size = align_stack((regions.count_states + regions.count_obs) * REG_SIZE);
+        self.sub_stack(frame_size);
+        self.emit(arm! {mov x(MEM), sp});
+
+        for i in 0..regions.count_states {
+            load_x_from_mem(&mut self.a, SCRATCH2, STATES, 2 * i as u32);
+            self.emit(arm! {ldr q(0), [x(SCRATCH2), x(IDX), lsl #4]});
+            save_q_to_mem(&mut self.a, 0, MEM, i as u32);
+        }
+
+        self.set_label("@main");
+
+        let stack_size = align_stack(regions.cap * REG_SIZE);
+        allocate_stack(&mut self.a, stack_size, false);
+    }
+
+    fn epilogue_sympy(&mut self, regions: &StackRegions) {
+        self.emit(arm! {eor x(0), x(0), x(0)});
+        self.set_label("@epilogue");
+
+        self.emit(arm! {tst x(STATES), x(STATES)});
+        self.jump("@done", 0, |offset, _| arm! {b.eq label(offset)});
+
+        for i in 0..regions.count_obs {
+            load_x_from_mem(
+                &mut self.a,
+                SCRATCH2,
+                STATES,
+                2 * (regions.count_states + i) as u32,
+            );
+            let k = (regions.count_states + i) as u32;
+            load_q_from_mem(&mut self.a, 0, MEM, k);
+            self.emit(arm! {str q(0), [x(SCRATCH2), x(IDX), lsl #4]});
+        }
+
+        self.set_label("@done");
+        load_nonvolatile_regs(&mut self.a);
+        self.emit(arm! {ret});
+    }
+
+    fn prologue_symbolica(&mut self, regions: &StackRegions) {
+        save_nonvolatile_regs(&mut self.a);
+
+        self.emit(arm! {tst x(IDX), x(IDX)});
+        self.jump("@main", 0, |offset, _| arm! {b.eq label(offset)});
+
+        let frame_size = align_stack(regions.count_params as u32 * REG_SIZE);
+        self.sub_stack(frame_size);
+        self.emit(arm! {mov x(SCRATCH2), x(PARAMS)});
+        self.emit(arm! {mov x(PARAMS), sp});
+
+        if regions.count_params >= 16 {
+            self.emit(arm! {mov x(SCRATCH3), x(PARAMS)});
+            self.emit(arm! {movz x(COUNTER), #regions.count_params & 0xffff});
+            self.emit(arm! {movk_lsl16 x(COUNTER), #regions.count_params >> 16});
+
+            self.set_label("@load");
+            load_d_from_mem(&mut self.a, 0, SCRATCH2, 0);
+            load_d_from_mem(&mut self.a, 1, SCRATCH2, regions.count_params);
+            self.emit(arm! {zip1 q(0), q(0), q(1)});
+            save_q_to_mem(&mut self.a, 0, SCRATCH3, 0);
+            self.emit(arm! {add x(SCRATCH2), x(SCRATCH2), #8});
+            self.emit(arm! {add x(SCRATCH3), x(SCRATCH3), #16});
+            self.emit(arm! {subs x(COUNTER), x(COUNTER), #1});
+            self.jump("@load", 0, |offset, _| arm! {b.ne label(offset)});
+        } else {
+            for j in 0..2 {
+                for i in 0..regions.count_params {
+                    load_d_from_mem(&mut self.a, 0, SCRATCH2, i + j * regions.count_params);
+                    save_d_to_mem(&mut self.a, 0, PARAMS, (i * 2 + j) as u32);
+                }
+            }
+        }
+
+        self.sub_stack(align_stack(regions.count_obs * REG_SIZE));
+        self.emit(arm! {mov x(STATES), x(MEM)});
+        self.emit(arm! {mov x(MEM), sp});
+
+        self.set_label("@main");
+
+        let stack_size = align_stack(regions.cap as u32 * REG_SIZE);
+        allocate_stack(&mut self.a, stack_size, true);
+    }
+
+    fn epilogue_symbolica(&mut self, regions: &StackRegions) {
+        self.emit(arm! {eor x(0), x(0), x(0)});
+        self.set_label("@epilogue");
+
+        self.emit(arm! {tst x(IDX), x(IDX)});
+        self.jump("@done", 0, |offset, _| arm! {b.eq label(offset)});
+
+        if regions.count_obs >= 16 {
+            self.emit(arm! {mov x(SCRATCH2), x(MEM)});
+            self.emit(arm! {mov x(SCRATCH3), x(STATES)});
+            self.emit(arm! {movz x(COUNTER), #regions.count_obs & 0xffff});
+            self.emit(arm! {movk_lsl16 x(COUNTER), #regions.count_obs >> 16});
+
+            self.set_label("@save");
+            load_q_from_mem(&mut self.a, 0, SCRATCH2, 0);
+            self.emit(arm! {dup q(1), q(0)[1]});
+            save_d_to_mem(&mut self.a, 0, SCRATCH3, 0);
+            save_d_to_mem(&mut self.a, 1, SCRATCH3, regions.count_obs);
+            self.emit(arm! {add x(SCRATCH2), x(SCRATCH2), #16});
+            self.emit(arm! {add x(SCRATCH3), x(SCRATCH3), #8});
+            self.emit(arm! {subs x(COUNTER), x(COUNTER), #1});
+            self.jump("@save", 0, |offset, _| arm! {b.ne label(offset)});
+        } else {
+            for j in 0..2 {
+                for i in 0..regions.count_obs {
+                    load_d_from_mem(&mut self.a, 0, MEM, i * 2 + j);
+                    save_d_to_mem(&mut self.a, 0, STATES, i + j * regions.count_obs);
+                }
+            }
+        }
+
+        self.set_label("@done");
+        load_nonvolatile_regs(&mut self.a);
+        self.emit(arm! {ret});
+    }
+}

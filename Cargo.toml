@@ -1,6 +1,6 @@
 [package]
 name = "symjit"
-version = "2.21.0"
+version = "2.22.0"
 edition = "2021"
 authors = ["Shahriar Iravanian <siravan@svtsim.com>"]
 license = "MIT"
@@ -44,9 +44,9 @@ selinux-fix = ["memmap2"]
 default = []
 
 [lib]
-path = "rust/lib.rs"
+path = "src/lib.rs"
 crate-type = ["rlib"]
 
 [[bin]]
 name = "symjit"
-path = "rust/bin.rs"
+path = "src/bin.rs"
