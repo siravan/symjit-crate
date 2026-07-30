@@ -67,9 +67,9 @@ fn kernel_p2_scalar_real() -> Result<()> {
     let mut compiler = Compiler::with_config(config);
     let app = compiler.translate(MODEL.into(), 0)?.seal()?;
 
-    let mut x = vec![2.0, 3.0, 4.0, 5.0, 6.0];
-    let mut y = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-    let mut z = vec![0.0, 0.0, 0.0, 0.0, 0.0];
+    let mut x = [2.0, 3.0, 4.0, 5.0, 6.0];
+    let mut y = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let mut z = [0.0, 0.0, 0.0, 0.0, 0.0];
 
     let states: Vec<&mut [f64]> = vec![&mut x[..], &mut y[..], &mut z[..]];
     let params: Vec<f64> = Vec::new();
@@ -87,9 +87,9 @@ fn kernel_p2_scalar_complex() -> Result<()> {
     let mut compiler = Compiler::with_config(config);
     let app = compiler.translate(MODEL.into(), 0)?.seal()?;
 
-    let mut x = Complex::new(vec![1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0]);
-    let mut y = Complex::new(vec![1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0]);
-    let mut z = Complex::new(vec![0.0, 0.0, 0.0], vec![0.0, 0.0, 0.0]);
+    let mut x = Complex::new([1.0, 2.0, 3.0], [2.0, 3.0, 4.0]);
+    let mut y = Complex::new([1.0, 2.0, 3.0], [2.0, 3.0, 4.0]);
+    let mut z = Complex::new([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]);
 
     let states: Vec<&mut [f64]> = vec![
         &mut x.re[..],
@@ -113,9 +113,9 @@ fn kernel_p2_simd_real() -> Result<()> {
     let mut compiler = Compiler::with_config(config);
     let app = compiler.translate(MODEL.into(), 0)?.seal()?;
 
-    let mut x = vec![2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
-    let mut y = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-    let mut z = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let mut x = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+    let mut y = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    let mut z = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
 
     let states: Vec<&mut [f64]> = vec![&mut x[..], &mut y[..], &mut z[..]];
     let params: Vec<f64> = Vec::new();
@@ -134,9 +134,9 @@ fn kernel_p2_simd_complex() -> Result<()> {
     let mut compiler = Compiler::with_config(config);
     let app = compiler.translate(MODEL.into(), 0)?.seal()?;
 
-    let mut x = Complex::new(vec![1.0, 2.0, 3.0, 4.0], vec![1.0, 2.0, 3.0, 4.0]);
-    let mut y = Complex::new(vec![1.0, 2.0, 3.0, 4.0], vec![1.0, 2.0, 3.0, 4.0]);
-    let mut z = Complex::new(vec![0.0, 0.0, 0.0, 0.0], vec![0.0, 0.0, 0.0, 0.0]);
+    let mut x = Complex::new([1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0]);
+    let mut y = Complex::new([1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0]);
+    let mut z = Complex::new([0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]);
 
     let states: Vec<&mut [f64]> = vec![
         &mut x.re[..],
@@ -202,11 +202,11 @@ fn kernel_b1_simd_real() -> Result<()> {
     app.dump("test.bin", "simd");
     let app = app.seal()?;
 
-    let args = vec![
+    let args = [
         f64x4::new([1.0, 2.0, 3.0, 4.0]),
         f64x4::new([1.0, 2.0, 3.0, 4.0]),
     ];
-    let mut outs = vec![f64x4::new([0.0, 0.0, 0.0, 0.0])];
+    let mut outs = [f64x4::new([0.0, 0.0, 0.0, 0.0])];
 
     let f = app.simd_kernel().unwrap();
 
@@ -230,8 +230,8 @@ fn kernel_b1_simd_real() -> Result<()> {
     app.dump("test.bin", "simd");
     let app = app.seal()?;
 
-    let args = vec![f64x2::new([1.0, 2.0]), f64x2::new([1.0, 2.0])];
-    let mut outs = vec![f64x2::new([0.0, 0.0])];
+    let args = [f64x2::new([1.0, 2.0]), f64x2::new([1.0, 2.0])];
+    let mut outs = [f64x2::new([0.0, 0.0])];
 
     let f = app.simd_kernel().unwrap();
 
@@ -295,11 +295,11 @@ fn kernel_b1_simd_complex() -> Result<()> {
     let mut compiler = Compiler::with_config(config);
     let app = compiler.translate(MODEL.into(), 0)?.seal()?;
 
-    let args = vec![
+    let args = [
         Complex::new(f64x2::new([1.0, 2.0]), f64x2::new([1.0, 2.0])),
         Complex::new(f64x2::new([1.0, 2.0]), f64x2::new([1.0, 2.0])),
     ];
-    let mut outs = vec![Complex::new(f64x2::new([0.0, 0.0]), f64x2::new([0.0, 0.0]))];
+    let mut outs = [Complex::new(f64x2::new([0.0, 0.0]), f64x2::new([0.0, 0.0]))];
 
     let f = app.simd_kernel().unwrap();
 
