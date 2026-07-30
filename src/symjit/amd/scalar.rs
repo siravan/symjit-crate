@@ -1,6 +1,5 @@
-use crate::symjit::config::KernelType;
-
 use super::super::code::Func;
+use super::super::config::KernelType;
 use super::super::config::{Config, ABI_AREA};
 use super::super::generator::{FuncletType, Generator, StackRegions};
 use super::super::symbol::Loc;
