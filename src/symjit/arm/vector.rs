@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 
 use super::super::assembler::{Assembler, Jumper};
 use super::super::code::Func;
-use super::super::config::{Config, ABI_AREA};
+use super::super::config::{Config, KernelType, ABI_AREA};
 use super::super::generator::{FuncletType, Generator, StackRegions};
 use super::super::symbol::Loc;
 use super::super::utils::{align_stack, is_external_func, Reg};
@@ -222,7 +222,7 @@ impl Generator for ArmSimdGenerator {
     }
 
     fn load_param(&mut self, dst: Reg, idx: u32) {
-        if self.config.symbolica() {
+        if matches!(self.config.kernel_type(), KernelType::RowFirst) {
             load_q_from_mem(&mut self.a, ϕ(dst), PARAMS, idx);
         } else {
             load_d_from_mem(&mut self.a, ϕ(dst), PARAMS, idx);
@@ -247,7 +247,7 @@ impl Generator for ArmSimdGenerator {
     }
 
     fn load_param_complex(&mut self, xd: Reg, yd: Reg, idx: u32) {
-        if self.config.symbolica() {
+        if matches!(self.config.kernel_type(), KernelType::RowFirst) {
             load_paired_q_from_mem(&mut self.a, ϕ(xd), ϕ(yd), PARAMS, idx);
         } else {
             self.load_param(xd, idx);
@@ -698,7 +698,7 @@ impl Generator for ArmSimdGenerator {
     ) {
         let regions = StackRegions::new(cap, count_states, count_obs, count_params);
 
-        if self.config.symbolica() {
+        if matches!(self.config.kernel_type(), KernelType::RowFirst) {
             self.prologue_symbolica(&regions)
         } else {
             self.prologue_sympy(&regions)
@@ -714,7 +714,7 @@ impl Generator for ArmSimdGenerator {
     ) {
         let regions = StackRegions::new(cap, count_states, count_obs, count_params);
 
-        if self.config.symbolica() {
+        if matches!(self.config.kernel_type(), KernelType::RowFirst) {
             self.epilogue_symbolica(&regions)
         } else {
             self.epilogue_sympy(&regions)

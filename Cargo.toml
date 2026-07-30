@@ -48,5 +48,13 @@ path = "src/lib.rs"
 crate-type = ["rlib"]
 
 [[bin]]
-name = "symjit"
+name = "test"
 path = "src/bin.rs"
+
+[[bin]]
+name = "kernels"
+path = "src/kernels.rs"
+
+[[bin]]
+name = "profiler"
+path = "src/profile.rs"

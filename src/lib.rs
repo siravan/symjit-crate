@@ -297,6 +297,6 @@ pub use num_complex::{Complex, ComplexFloat};
 
 pub use symjit::{
     double, int, var, Applet, Application, BuiltinSymbol, Compiled, Compiler, CompilerType,
-    Composer, Config, Defuns, ElemType, Element, Expr, FastFunc, Instruction, MirWriter, Slot,
-    Storage, SymbolicaModel, Translator,
+    Composer, Config, Defuns, ElemType, Element, Expr, FastFunc, Instruction, Matrix, MirWriter,
+    Slot, Storage, SymbolicaModel, Translator,
 };

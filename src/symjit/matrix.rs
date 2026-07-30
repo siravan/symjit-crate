@@ -21,7 +21,7 @@ impl<'a> Matrix<'a> {
         Matrix { p, ncols }
     }
 
-    pub fn add_row(&mut self, v: *mut f64, n: usize) {
+    pub unsafe fn add_row(&mut self, v: *mut f64, n: usize) {
         self.ncols = if self.p.is_empty() {
             n
         } else {
