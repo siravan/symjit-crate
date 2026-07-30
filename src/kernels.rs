@@ -1,7 +1,7 @@
 use anyhow::Result;
 pub use num_complex::{Complex, ComplexFloat};
 use symjit::{Compiler, Config};
-use wide::f64x4;
+use wide::{f64x2, f64x4};
 
 const MODEL: &str = "
 ([('fun', ('temp', 0), 'square', [], [('param', 0)], False),
@@ -151,6 +151,9 @@ fn kernel_p2_simd_complex() -> Result<()> {
     let f = app.simd_kernel().unwrap();
     let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
 
+    #[cfg(target_arch = "aarch64")]
+    let _ = f(std::ptr::null(), states.as_ptr(), 1, params.as_ptr());
+
     assert!(z.re[3] == 4.0 && z.im[3] == 36.0);
     Ok(())
 }
@@ -190,6 +193,7 @@ fn kernel_b1_scalar_complex() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_arch = "x86_64")]
 fn kernel_b1_simd_real() -> Result<()> {
     let mut config = Config::default();
     config.enable_simd512(false);
@@ -214,6 +218,31 @@ fn kernel_b1_simd_real() -> Result<()> {
     );
 
     assert!(outs[0] == f64x4::new([2.0, 6.0, 12.0, 20.0]));
+    Ok(())
+}
+
+#[cfg(target_arch = "aarch64")]
+fn kernel_b1_simd_real() -> Result<()> {
+    let mut config = Config::default();
+    config.enable_simd512(false);
+    let mut compiler = Compiler::with_config(config);
+    let mut app = compiler.translate(MODEL.into(), 0)?;
+    app.dump("test.bin", "simd");
+    let app = app.seal()?;
+
+    let args = vec![f64x2::new([1.0, 2.0]), f64x2::new([1.0, 2.0])];
+    let mut outs = vec![f64x2::new([0.0, 0.0])];
+
+    let f = app.simd_kernel().unwrap();
+
+    let _ = f(
+        outs.as_mut_ptr() as *mut f64,
+        std::ptr::null(),
+        0,
+        args.as_ptr() as *const f64,
+    );
+
+    assert!(outs[0] == f64x2::new([2.0, 6.0]));
     Ok(())
 }
 
@@ -264,8 +293,7 @@ fn kernel_b1_simd_complex() -> Result<()> {
     let mut config = Config::default();
     config.set_complex(true);
     let mut compiler = Compiler::with_config(config);
-    let mut app = compiler.translate(MODEL.into(), 0)?;
-    let app = app.seal()?;
+    let app = compiler.translate(MODEL.into(), 0)?.seal()?;
 
     let args = vec![
         Complex::new(f64x2::new([1.0, 2.0]), f64x2::new([1.0, 2.0])),
@@ -306,7 +334,7 @@ fn kernel_b2_simd_real() -> Result<()> {
         args.as_ptr() as *const f64,
     );
 
-    assert!(outs[3] == 57.0); // 57 = 7^2 + 8
+    assert!(outs[1] == 13.0); // 13 = 3^2 + 4
     Ok(())
 }
 
@@ -345,7 +373,7 @@ fn kernel_b2_simd_complex() -> Result<()> {
         args.as_ptr() as *const f64,
     );
 
-    assert!(outs[3] == Complex::new(53.0, 30.0)); // 53+30j = (7+2j)^2 + (8+2j)
+    assert!(outs[1] == Complex::new(9.0, 14.0)); // 9+14j = (3+2j)^2 + (4+2j)
     Ok(())
 }
 
