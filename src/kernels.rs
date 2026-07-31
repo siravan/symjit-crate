@@ -1,6 +1,6 @@
 use anyhow::Result;
 pub use num_complex::{Complex, ComplexFloat};
-use symjit::{Compiler, Config};
+use symjit::{Compiled, Compiler, Config, PlaneDescriptor};
 use wide::{f64x2, f64x4};
 
 const MODEL: &str = "
@@ -214,6 +214,72 @@ fn kernel_p2_simd_complex_coef() -> Result<()> {
     let z = Complex::new(z.re[2], z.im[2]);
 
     assert!(z == (x * x + y) * coef);
+    Ok(())
+}
+
+fn kernel_p2_raw_duplicate_and_alias() -> Result<()> {
+    let mut config = Config::new(symjit::CompilerType::Native, 0)?;
+    config.set_symbolica(true);
+    config.set_direct_arena(true);
+    config.set_direct_arena_operation(0);
+    config.set_direct_arena_identity_output(true);
+    config.set_simd(true);
+    let mut compiler = Compiler::with_config(config);
+    let mut application = compiler.translate(MODEL.into(), 0)?;
+    application.prepare_simd();
+    let app = application.seal()?;
+
+    let mut values = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+    let values_descriptor =
+        unsafe { PlaneDescriptor::from_raw_parts(values.as_mut_ptr(), values.len()) };
+    let descriptors = [values_descriptor, values_descriptor, values_descriptor];
+
+    let simd_lanes = app.compiled_simd.as_ref().unwrap().count_lanes();
+    assert!(simd_lanes == 2 || simd_lanes == 4);
+    let simd = app.simd_plane_kernel().unwrap();
+    let _ = unsafe { simd(std::ptr::null(), descriptors.as_ptr(), 0, std::ptr::null()) };
+    let _ = unsafe {
+        simd(
+            std::ptr::null(),
+            descriptors.as_ptr(),
+            simd_lanes,
+            std::ptr::null(),
+        )
+    };
+    assert!(
+        values[simd_lanes - 1] == {
+            let input = (simd_lanes + 1) as f64;
+            input * input + input
+        }
+    );
+    assert!(
+        values[2 * simd_lanes - 1] == {
+            let input = (2 * simd_lanes + 1) as f64;
+            input * input + input
+        }
+    );
+
+    let mut scalar_values = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+    let scalar_descriptor =
+        unsafe { PlaneDescriptor::from_raw_parts(scalar_values.as_mut_ptr(), scalar_values.len()) };
+    let scalar_descriptors = [scalar_descriptor, scalar_descriptor, scalar_descriptor];
+    let scalar = app.scalar_plane_kernel().unwrap();
+    let _ = unsafe {
+        scalar(
+            std::ptr::null(),
+            scalar_descriptors.as_ptr(),
+            6,
+            std::ptr::null(),
+        )
+    };
+    assert!(scalar_values[6] == 72.0);
+
+    let ordinary_config = Config::new(symjit::CompilerType::Native, 0)?;
+    let ordinary = Compiler::with_config(ordinary_config)
+        .translate(MODEL.into(), 0)?
+        .seal()?;
+    assert!(ordinary.scalar_plane_kernel().is_none());
+    assert!(ordinary.simd_plane_kernel().is_none());
     Ok(())
 }
 
@@ -458,6 +524,9 @@ pub fn main() -> Result<()> {
 
     kernel_p2_simd_complex_coef()?;
     pass("Kernel P2 simd complex with coefficients");
+
+    kernel_p2_raw_duplicate_and_alias()?;
+    pass("Kernel P2 raw duplicate and alias");
 
     kernel_b1_scalar_real()?;
     pass("Kernel B1 real");
