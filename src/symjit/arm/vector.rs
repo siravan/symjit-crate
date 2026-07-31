@@ -750,11 +750,12 @@ impl ArmSimdGenerator {
         let frame_size = align_stack((regions.count_states + regions.count_obs) * REG_SIZE);
         self.sub_stack(frame_size);
         self.emit(arm! {mov x(MEM), sp});
+        self.emit(arm! {lsr x(IDX), x(IDX), #1}); // changing indexing from f64x2 to f64
 
         for i in 0..regions.count_states {
-            load_x_from_mem(&mut self.a, SCRATCH2, STATES, 2 * i as u32);
+            load_x_from_mem(&mut self.a, SCRATCH2, STATES, 2 * i);
             self.emit(arm! {ldr q(0), [x(SCRATCH2), x(IDX), lsl #4]});
-            save_q_to_mem(&mut self.a, 0, MEM, i as u32);
+            save_q_to_mem(&mut self.a, 0, MEM, i);
         }
 
         self.set_label("@main");
@@ -775,10 +776,9 @@ impl ArmSimdGenerator {
                 &mut self.a,
                 SCRATCH2,
                 STATES,
-                2 * (regions.count_states + i) as u32,
+                2 * (regions.count_states + i),
             );
-            let k = (regions.count_states + i) as u32;
-            load_q_from_mem(&mut self.a, 0, MEM, k);
+            load_q_from_mem(&mut self.a, 0, MEM, regions.count_states + i);
             self.emit(arm! {str q(0), [x(SCRATCH2), x(IDX), lsl #4]});
         }
 
@@ -793,7 +793,7 @@ impl ArmSimdGenerator {
         self.emit(arm! {tst x(IDX), x(IDX)});
         self.jump("@main", 0, |offset, _| arm! {b.eq label(offset)});
 
-        let frame_size = align_stack(regions.count_params as u32 * REG_SIZE);
+        let frame_size = align_stack(regions.count_params * REG_SIZE);
         self.sub_stack(frame_size);
         self.emit(arm! {mov x(SCRATCH2), x(PARAMS)});
         self.emit(arm! {mov x(PARAMS), sp});
@@ -816,7 +816,7 @@ impl ArmSimdGenerator {
             for j in 0..2 {
                 for i in 0..regions.count_params {
                     load_d_from_mem(&mut self.a, 0, SCRATCH2, i + j * regions.count_params);
-                    save_d_to_mem(&mut self.a, 0, PARAMS, (i * 2 + j) as u32);
+                    save_d_to_mem(&mut self.a, 0, PARAMS, i * 2 + j);
                 }
             }
         }
@@ -827,7 +827,7 @@ impl ArmSimdGenerator {
 
         self.set_label("@main");
 
-        let stack_size = align_stack(regions.cap as u32 * REG_SIZE);
+        let stack_size = align_stack(regions.cap * REG_SIZE);
         allocate_stack(&mut self.a, stack_size, true);
     }
 

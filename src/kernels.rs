@@ -122,8 +122,29 @@ fn kernel_p2_simd_real() -> Result<()> {
 
     let f = app.simd_kernel().unwrap();
     let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
-    let _ = f(std::ptr::null(), states.as_ptr(), 1, params.as_ptr());
-    assert!(z[2] == 19.0);
+    let _ = f(std::ptr::null(), states.as_ptr(), 4, params.as_ptr());
+    assert!(z[3] == x[3] * x[3] + y[3]);
+    Ok(())
+}
+
+fn kernel_p2_simd_real_coef() -> Result<()> {
+    let mut config = Config::default();
+    config.set_direct_arena(true);
+    config.set_direct_arena_identity_output(false);
+    let mut compiler = Compiler::with_config(config);
+    let app = compiler.translate(MODEL.into(), 0)?.seal()?;
+
+    let mut x = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+    let mut y = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    let mut z = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+
+    let states: Vec<&mut [f64]> = vec![&mut x[..], &mut y[..], &mut z[..]];
+    let params: Vec<f64> = vec![8.0];
+
+    let f = app.simd_kernel().unwrap();
+    let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
+    let _ = f(std::ptr::null(), states.as_ptr(), 4, params.as_ptr());
+    assert!(z[2] == (x[2] * x[2] + y[2]) * params[0]);
     Ok(())
 }
 
@@ -152,9 +173,47 @@ fn kernel_p2_simd_complex() -> Result<()> {
     let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
 
     #[cfg(target_arch = "aarch64")]
-    let _ = f(std::ptr::null(), states.as_ptr(), 1, params.as_ptr());
+    let _ = f(std::ptr::null(), states.as_ptr(), 2, params.as_ptr());
 
     assert!(z.re[3] == 4.0 && z.im[3] == 36.0);
+    Ok(())
+}
+
+fn kernel_p2_simd_complex_coef() -> Result<()> {
+    let mut config = Config::default();
+    config.set_complex(true);
+    config.set_direct_arena(true);
+    config.set_direct_arena_identity_output(false);
+    let mut compiler = Compiler::with_config(config);
+    let app = compiler.translate(MODEL.into(), 0)?.seal()?;
+
+    let mut x = Complex::new([1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0]);
+    let mut y = Complex::new([1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0]);
+    let mut z = Complex::new([0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]);
+
+    let states: Vec<&mut [f64]> = vec![
+        &mut x.re[..],
+        &mut x.im[..],
+        &mut y.re[..],
+        &mut y.im[..],
+        &mut z.re[..],
+        &mut z.im[..],
+    ];
+
+    let coef = Complex::new(2.0, -5.0);
+    let params: Vec<f64> = vec![coef.re, coef.im];
+
+    let f = app.simd_kernel().unwrap();
+    let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
+
+    #[cfg(target_arch = "aarch64")]
+    let _ = f(std::ptr::null(), states.as_ptr(), 1, params.as_ptr());
+
+    let x = Complex::new(x.re[2], x.im[2]);
+    let y = Complex::new(y.re[2], y.im[2]);
+    let z = Complex::new(z.re[2], z.im[2]);
+
+    assert!(z == (x * x + y) * coef);
     Ok(())
 }
 
@@ -162,8 +221,8 @@ fn kernel_b1_scalar_real() -> Result<()> {
     let mut compiler = Compiler::new();
     let app = compiler.translate(MODEL.into(), 0)?.seal()?;
 
-    let args = vec![3.0, 5.0];
-    let mut outs = vec![0.0];
+    let args = [3.0, 5.0];
+    let mut outs = [0.0];
 
     let f = app.scalar_kernel().unwrap();
     let _ = f(outs.as_mut_ptr(), std::ptr::null(), 0, args.as_ptr());
@@ -178,8 +237,8 @@ fn kernel_b1_scalar_complex() -> Result<()> {
     let mut compiler = Compiler::with_config(config);
     let app = compiler.translate(MODEL.into(), 0)?.seal()?;
 
-    let args = vec![Complex::new(1.0, 2.0), Complex::new(3.0, 4.0)];
-    let mut outs = vec![Complex::new(0.0, 0.0)];
+    let args = [Complex::new(1.0, 2.0), Complex::new(3.0, 4.0)];
+    let mut outs = [Complex::new(0.0, 0.0)];
 
     let f = app.scalar_kernel().unwrap();
     let _ = f(
@@ -327,12 +386,7 @@ fn kernel_b2_simd_real() -> Result<()> {
 
     let f = app.simd_kernel().unwrap();
 
-    let _ = f(
-        outs.as_mut_ptr() as *mut f64,
-        std::ptr::null(),
-        1,
-        args.as_ptr() as *const f64,
-    );
+    let _ = f(outs.as_mut_ptr(), std::ptr::null(), 1, args.as_ptr());
 
     assert!(outs[1] == 13.0); // 13 = 3^2 + 4
     Ok(())
@@ -396,8 +450,14 @@ pub fn main() -> Result<()> {
     kernel_p2_simd_real()?;
     pass("Kernel P2 simd real");
 
+    kernel_p2_simd_real_coef()?;
+    pass("Kernel P2 simd real with coefficients");
+
     kernel_p2_simd_complex()?;
     pass("Kernel P2 simd complex");
+
+    kernel_p2_simd_complex_coef()?;
+    pass("Kernel P2 simd complex with coefficients");
 
     kernel_b1_scalar_real()?;
     pass("Kernel B1 real");

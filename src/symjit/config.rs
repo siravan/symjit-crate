@@ -776,7 +776,8 @@ impl Default for Config {
                     | FAST_COMPLEX
                     // | DIRECT
                     | PARALLEL_MUL
-                    | (2 << OPT_LEVEL_SHIFT),
+                    | (2 << OPT_LEVEL_SHIFT)
+                    | DIRECT_ARENA_IDENTITY_OUTPUT,
             )
             .unwrap()
             // config.to_toml("symjit.toml");

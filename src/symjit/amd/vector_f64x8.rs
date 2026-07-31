@@ -768,9 +768,9 @@ impl AmdVectorF64x8Generator {
         self.amd.mov(MEM, SP); // in indirect mode, MEM is allocated on the stack
 
         // multiply IDX by 8 to convert from f64x8 index to f64 index
-        self.amd.add(IDX, IDX);
-        self.amd.add(IDX, IDX);
-        self.amd.add(IDX, IDX);
+        // self.amd.add(IDX, IDX);
+        // self.amd.add(IDX, IDX);
+        // self.amd.add(IDX, IDX);
 
         for i in 0..regions.count_states {
             self.amd.mov_reg_mem(Amd::RAX, STATES, 2 * 8 * i as i32);
