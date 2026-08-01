@@ -122,7 +122,7 @@ fn kernel_p2_simd_real() -> Result<()> {
 
     let f = app.simd_kernel().unwrap();
     let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
-    let _ = f(std::ptr::null(), states.as_ptr(), 4, params.as_ptr());
+    let _ = f(std::ptr::null(), states.as_ptr(), 2, params.as_ptr());
     assert!(z[3] == x[3] * x[3] + y[3]);
     Ok(())
 }
@@ -143,7 +143,7 @@ fn kernel_p2_simd_real_coef() -> Result<()> {
 
     let f = app.simd_kernel().unwrap();
     let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
-    let _ = f(std::ptr::null(), states.as_ptr(), 4, params.as_ptr());
+    let _ = f(std::ptr::null(), states.as_ptr(), 2, params.as_ptr());
     assert!(z[2] == (x[2] * x[2] + y[2]) * params[0]);
     Ok(())
 }
@@ -207,7 +207,7 @@ fn kernel_p2_simd_complex_coef() -> Result<()> {
     let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
 
     #[cfg(target_arch = "aarch64")]
-    let _ = f(std::ptr::null(), states.as_ptr(), 1, params.as_ptr());
+    let _ = f(std::ptr::null(), states.as_ptr(), 2, params.as_ptr());
 
     let x = Complex::new(x.re[2], x.im[2]);
     let y = Complex::new(y.re[2], y.im[2]);
@@ -237,14 +237,7 @@ fn kernel_p2_raw_duplicate_and_alias() -> Result<()> {
     let simd_lanes = app.compiled_simd.as_ref().unwrap().count_lanes();
     assert!(simd_lanes == 2 || simd_lanes == 4);
     let simd = app.simd_plane_kernel().unwrap();
-    let _ = unsafe {
-        simd(
-            std::ptr::null(),
-            descriptors.as_ptr(),
-            0,
-            std::ptr::null(),
-        )
-    };
+    let _ = unsafe { simd(std::ptr::null(), descriptors.as_ptr(), 0, std::ptr::null()) };
     let _ = unsafe {
         simd(
             std::ptr::null(),
@@ -253,19 +246,22 @@ fn kernel_p2_raw_duplicate_and_alias() -> Result<()> {
             std::ptr::null(),
         )
     };
-    assert!(values[simd_lanes - 1] == {
-        let input = (simd_lanes + 1) as f64;
-        input * input + input
-    });
-    assert!(values[2 * simd_lanes - 1] == {
-        let input = (2 * simd_lanes + 1) as f64;
-        input * input + input
-    });
+    assert!(
+        values[simd_lanes - 1] == {
+            let input = (simd_lanes + 1) as f64;
+            input * input + input
+        }
+    );
+    assert!(
+        values[2 * simd_lanes - 1] == {
+            let input = (2 * simd_lanes + 1) as f64;
+            input * input + input
+        }
+    );
 
     let mut scalar_values = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
-    let scalar_descriptor = unsafe {
-        PlaneDescriptor::from_raw_parts(scalar_values.as_mut_ptr(), scalar_values.len())
-    };
+    let scalar_descriptor =
+        unsafe { PlaneDescriptor::from_raw_parts(scalar_values.as_mut_ptr(), scalar_values.len()) };
     let scalar_descriptors = [scalar_descriptor, scalar_descriptor, scalar_descriptor];
     let scalar = app.scalar_plane_kernel().unwrap();
     let _ = unsafe {
