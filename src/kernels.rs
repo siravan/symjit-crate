@@ -122,7 +122,7 @@ fn kernel_p2_simd_real() -> Result<()> {
 
     let f = app.simd_kernel().unwrap();
     let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
-    let _ = f(std::ptr::null(), states.as_ptr(), 4, params.as_ptr());
+    let _ = f(std::ptr::null(), states.as_ptr(), 2, params.as_ptr());
     assert!(z[3] == x[3] * x[3] + y[3]);
     Ok(())
 }
@@ -143,7 +143,7 @@ fn kernel_p2_simd_real_coef() -> Result<()> {
 
     let f = app.simd_kernel().unwrap();
     let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
-    let _ = f(std::ptr::null(), states.as_ptr(), 4, params.as_ptr());
+    let _ = f(std::ptr::null(), states.as_ptr(), 2, params.as_ptr());
     assert!(z[2] == (x[2] * x[2] + y[2]) * params[0]);
     Ok(())
 }
@@ -207,7 +207,7 @@ fn kernel_p2_simd_complex_coef() -> Result<()> {
     let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
 
     #[cfg(target_arch = "aarch64")]
-    let _ = f(std::ptr::null(), states.as_ptr(), 1, params.as_ptr());
+    let _ = f(std::ptr::null(), states.as_ptr(), 2, params.as_ptr());
 
     let x = Complex::new(x.re[2], x.im[2]);
     let y = Complex::new(y.re[2], y.im[2]);
