@@ -7,6 +7,7 @@ pub enum Operation {
     Divide,
 }
 
+/// Fast Operation handling instead of String
 impl Operation {
     pub fn new(op: &str) -> Operation {
         match op {
