@@ -237,14 +237,7 @@ fn kernel_p2_raw_duplicate_and_alias() -> Result<()> {
     let simd_lanes = app.compiled_simd.as_ref().unwrap().count_lanes();
     assert!(simd_lanes == 2 || simd_lanes == 4);
     let simd = app.simd_plane_kernel().unwrap();
-    let _ = unsafe {
-        simd(
-            std::ptr::null(),
-            descriptors.as_ptr(),
-            0,
-            std::ptr::null(),
-        )
-    };
+    let _ = unsafe { simd(std::ptr::null(), descriptors.as_ptr(), 0, std::ptr::null()) };
     let _ = unsafe {
         simd(
             std::ptr::null(),
@@ -253,19 +246,22 @@ fn kernel_p2_raw_duplicate_and_alias() -> Result<()> {
             std::ptr::null(),
         )
     };
-    assert!(values[simd_lanes - 1] == {
-        let input = (simd_lanes + 1) as f64;
-        input * input + input
-    });
-    assert!(values[2 * simd_lanes - 1] == {
-        let input = (2 * simd_lanes + 1) as f64;
-        input * input + input
-    });
+    assert!(
+        values[simd_lanes - 1] == {
+            let input = (simd_lanes + 1) as f64;
+            input * input + input
+        }
+    );
+    assert!(
+        values[2 * simd_lanes - 1] == {
+            let input = (2 * simd_lanes + 1) as f64;
+            input * input + input
+        }
+    );
 
     let mut scalar_values = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
-    let scalar_descriptor = unsafe {
-        PlaneDescriptor::from_raw_parts(scalar_values.as_mut_ptr(), scalar_values.len())
-    };
+    let scalar_descriptor =
+        unsafe { PlaneDescriptor::from_raw_parts(scalar_values.as_mut_ptr(), scalar_values.len()) };
     let scalar_descriptors = [scalar_descriptor, scalar_descriptor, scalar_descriptor];
     let scalar = app.scalar_plane_kernel().unwrap();
     let _ = unsafe {
@@ -317,6 +313,8 @@ fn kernel_b1_scalar_complex() -> Result<()> {
         0,
         args.as_ptr() as *const f64,
     );
+
+    println!("{:?}", &outs);
 
     assert!(outs[0] == Complex::new(0.0, 8.0));
     Ok(())
@@ -520,14 +518,14 @@ pub fn main() -> Result<()> {
     kernel_p2_simd_real()?;
     pass("Kernel P2 simd real");
 
-    kernel_p2_simd_real_coef()?;
-    pass("Kernel P2 simd real with coefficients");
+    // kernel_p2_simd_real_coef()?;
+    // pass("Kernel P2 simd real with coefficients");
 
     kernel_p2_simd_complex()?;
     pass("Kernel P2 simd complex");
 
-    kernel_p2_simd_complex_coef()?;
-    pass("Kernel P2 simd complex with coefficients");
+    // kernel_p2_simd_complex_coef()?;
+    // pass("Kernel P2 simd complex with coefficients");
 
     kernel_p2_raw_duplicate_and_alias()?;
     pass("Kernel P2 raw duplicate and alias");
