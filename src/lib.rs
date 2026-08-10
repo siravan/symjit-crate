@@ -296,7 +296,33 @@ mod symjit;
 pub use num_complex::{Complex, ComplexFloat};
 
 pub use symjit::{
-    double, int, var, Applet, Application, BuiltinSymbol, Compiled, CompiledPlaneFunc, Compiler,
-    CompilerType, Composer, Config, Defuns, ElemType, Element, Expr, FastFunc, Instruction, Matrix,
-    MirWriter, PlaneDescriptor, Slot, Storage, SymbolicaModel, Translator,
+    Applet, Application, BuiltinSymbol, Compiled, CompiledPlaneFunc, Compiler, CompilerType,
+    Composer, Config, Defuns, ElemType, Element, Expr, FastFunc, Instruction, Matrix, MirWriter,
+    PlaneDescriptor, Slot, Storage, SymbolicaModel, Translator,
 };
+
+pub fn var(name: &str) -> Expr {
+    Expr::var(name)
+}
+
+pub fn double(val: f64) -> Expr {
+    Expr::from(val)
+}
+
+pub fn int(val: i32) -> Expr {
+    Expr::from(val)
+}
+
+fn bool_to_f64(b: bool) -> f64 {
+    const T: f64 = f64::from_bits(!0);
+    const F: f64 = f64::from_bits(0);
+    if b {
+        T
+    } else {
+        F
+    }
+}
+
+pub fn boolean(val: bool) -> Expr {
+    Expr::from(bool_to_f64(val))
+}
