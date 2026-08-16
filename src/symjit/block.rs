@@ -2,16 +2,16 @@ use anyhow::Result;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::Write;
 use std::rc::Rc;
 
 use super::config::Config;
+use super::config::SLICE_CAP;
 use super::mir::Mir;
 use super::node::Node;
 use super::operation::Operation;
 use super::statement::Statement;
 use super::symbol::{Loc, Symbol, SymbolTable};
+use super::topology::Topology;
 
 //****************************************************//
 
@@ -22,16 +22,29 @@ pub struct Block {
     pub num_tmp: usize,
     pub calls: HashMap<(String, u64), Node>,
     pub config: Config,
+    pub topology: Topology,
 }
 
 impl Block {
     pub fn new(config: Config) -> Block {
+        let sym_table = SymbolTable::new(config.is_complex());
+
+        let mut args: Vec<Rc<RefCell<Symbol>>> = Vec::new();
+        for i in 0..SLICE_CAP {
+            let name = format!("__Arg{}", i);
+            let sym = sym_table.find_sym(&name).unwrap();
+            args.push(sym);
+        }
+
+        let topology = Topology::new(config.clone(), args);
+
         Block {
             stmts: Vec::new(),
-            sym_table: SymbolTable::new(config.is_complex()),
+            sym_table,
             num_tmp: 0,
             calls: HashMap::new(),
             config,
+            topology,
         }
     }
 
@@ -70,32 +83,27 @@ impl Block {
     // **************** Compile the Block! *********************
 
     pub fn compile(&mut self, ir: &mut Mir, salt: Option<String>) -> Result<()> {
-        let mut topologies: HashMap<String, i64> = HashMap::new();
-        let topo = self.config.debug_topology() && salt.is_some();
+        if self.topology.enabled {
+            self.topology.set_salt(salt);
+
+            for stmt in self.stmts.iter_mut() {
+                stmt.add_topology(&mut self.topology);
+            }
+
+            self.topology.prepare();
+        }
 
         for stmt in self.stmts.iter_mut() {
-            if let Some(t) = stmt.compile(ir, topo)? {
-                if let Some(p) = topologies.get_mut(&t) {
-                    *p += 1;
-                } else {
-                    topologies.insert(t, 1);
-                }
-            }
+            stmt.compile(ir, &mut self.topology)?;
         }
 
-        if topo {
-            let mut counts: Vec<(&String, &i64)> = topologies.iter().collect();
-            counts.sort_by_key(|&(_, v)| -v);
-
-            let name = &format!("symjit_{}_topology.txt", salt.unwrap());
-            let mut fs = fs::File::create(name)?;
-
-            for (k, v) in counts.iter() {
-                writeln!(fs, "{}\t{}", v, k)?;
-            }
-        }
+        // println!("{:?}", &self.topology);
 
         Ok(())
+    }
+
+    pub fn compile_subroutines(&mut self, ir: &mut Mir) -> Result<()> {
+        self.topology.compile(ir)
     }
 
     // create_* functions create a new Node
@@ -229,17 +237,28 @@ impl Block {
 
         let count_scratch = self.config.count_scratch();
 
-        let right = if left.ershov_number() == count_scratch - 1
-            && right.ershov_number() == count_scratch - 1
-        {
-            let lhs = self.create_tmp();
-            self.stmts.push(Statement::assign(lhs.clone(), right));
-            lhs
+        if left.ershov_number() == count_scratch && right.ershov_number() == count_scratch {
+            let l = self.create_tmp();
+            let r = self.create_tmp();
+            self.stmts.push(Statement::assign(l.clone(), left));
+            self.stmts.push(Statement::assign(r.clone(), right));
+            Node::create_binary(op, l, r, power, cond)
         } else {
-            right
-        };
+            Node::create_binary(op, left, right, power, cond)
+        }
+
+        /*/
+        let right =
+            if left.ershov_number() == count_scratch && right.ershov_number() == count_scratch {
+                let lhs = self.create_tmp();
+                self.stmts.push(Statement::assign(lhs.clone(), right));
+                lhs
+            } else {
+                right
+            };
 
         Node::create_binary(op, left, right, power, cond)
+        */
     }
 
     pub fn break_call_binary(&mut self, op: Operation, left: Node, right: Node) -> Node {
@@ -325,9 +344,9 @@ impl Block {
 
         for s in stmts {
             match s {
-                Statement::Assign { lhs, rhs } => {
+                Statement::Assign { lhs, rhs, topo } => {
                     let rhs = self.rewrite_cse(&cs, &mut ls, rhs);
-                    self.stmts.push(Statement::Assign { lhs, rhs });
+                    self.stmts.push(Statement::Assign { lhs, rhs, topo });
                 }
                 Statement::Call {
                     op,

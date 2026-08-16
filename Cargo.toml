@@ -1,6 +1,6 @@
 [package]
 name = "symjit"
-version = "2.22.0"
+version = "2.23.0"
 edition = "2021"
 authors = ["Shahriar Iravanian <siravan@svtsim.com>"]
 license = "MIT"
@@ -29,6 +29,7 @@ spec_math = "0.1.6"
 hashbrown = "0.16.0"
 num-complex = "0.4.6"
 num-traits = "0.2"
+num-rational = "0.4"
 ahash = "0.8"
 rand= "0.9"
 wide = "1.1"
