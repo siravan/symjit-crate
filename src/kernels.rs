@@ -501,7 +501,7 @@ fn kernel_b2_simd_complex() -> Result<()> {
 
 pub fn main() -> Result<()> {
     test_instructions()?;
-    pass("instructions");
+    //pass("instructions");
 
     kernel_p1_real()?;
     pass("Kernel P1 real");
