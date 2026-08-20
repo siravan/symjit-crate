@@ -62,17 +62,34 @@ impl Statement {
     pub fn compile(&mut self, ir: &mut Mir, topology: &mut Topology) -> Result<()> {
         match self {
             Statement::Assign { lhs, rhs, topo } => {
-                if let Some((num_args, defined)) = topology.status(&topo) {
+                if let Some((_, defined)) = topology.status(topo) {
                     if !defined {
-                        let mut n = num_args as u8 - 1;
+                        let mut n = 0;
                         let body = rhs.subroutine(&topology.args, &mut n);
-                        topology.define(&topo, body);
+                        topology.define(topo, body);
                     }
 
-                    let mut n = num_args as u8 - 1;
-                    rhs.caller(ir, &mut n);
+                    let mut locs: Vec<Loc> = Vec::new();
+                    rhs.caller(ir, &mut locs);
 
-                    ir.call(&topo, 0)?;
+                    let ultra = ir.config.opt_level() >= 3
+                        && locs.iter().all(|l| {
+                            if let Loc::Stack(idx) = l {
+                                *idx < 65536
+                            } else {
+                                false
+                            }
+                        });
+
+                    if ultra {
+                        ir.load_args(locs, true);
+                        let label = format!("{}_ultra", &topo);
+                        ir.call(&label, 0)?;
+                    } else {
+                        ir.load_args(locs, false);
+                        ir.call(topo, 0)?;
+                    }
+
                     Self::save_result(ir, lhs);
                     ir.nop();
                 } else {
