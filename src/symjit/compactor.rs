@@ -66,17 +66,6 @@ impl Compactor {
                         }
                     }
                 }
-                Instruction::LoadArgs { locs, .. } => {
-                    for loc in locs {
-                        if let Loc::Stack(idx) = loc {
-                            if idx >= self.fixed {
-                                if let Some(x) = self.live.get_mut(&loc) {
-                                    *x = ip + 1;
-                                }
-                            }
-                        }
-                    }
-                }
                 Instruction::Save { loc, .. } | Instruction::SaveComplex { loc, .. } => {
                     if let Loc::Stack(idx) = loc {
                         if idx >= self.fixed {
@@ -152,18 +141,6 @@ impl Compactor {
                         loc: l,
                     });
                 }
-                Instruction::LoadArgs {
-                    locs,
-                    complex,
-                    ultra,
-                } => {
-                    let l: Vec<Loc> = locs.iter().map(|x| self.load(*x, ip)).collect();
-                    self.push(Instruction::LoadArgs {
-                        locs: l,
-                        complex: *complex,
-                        ultra: *ultra,
-                    })
-                }
                 Instruction::LoadMath { op, dst, s1, loc } => {
                     let l = self.load(*loc, ip);
                     self.push(Instruction::LoadMath {
@@ -199,15 +176,6 @@ impl Compactor {
                         loc: l,
                     });
                 }
-                Instruction::SaveArgs {
-                    num_args,
-                    complex,
-                    ultra,
-                } => self.push(Instruction::SaveArgs {
-                    num_args: *num_args,
-                    complex: *complex,
-                    ultra: *ultra,
-                }),
                 Instruction::Label { label } => {
                     if !self.labels.contains(label) {
                         // beginning of a backward loop

@@ -282,18 +282,6 @@ impl Generator for Complexifier {
         self.save_stack(Reg::Ret, idx);
     }
 
-    fn load_args(&mut self, locs: Vec<Loc>, ultra: bool) {
-        self.mir.load_args_complex(locs, ultra)
-    }
-
-    fn save_args(&mut self, num_args: u8, ultra: bool) {
-        self.mir.save_args_complex(num_args, ultra)
-    }
-
-    fn load_args_complex(&mut self, _loc: Vec<Loc>, _ultra: bool) {}
-
-    fn save_args_complex(&mut self, _num_args: u8, _ultra: bool) {}
-
     fn neg(&mut self, dst: Reg, s1: Reg) {
         self.mir.neg(re(dst), re(s1));
 
@@ -775,13 +763,9 @@ impl Generator for Complexifier {
         self.mir.call(op, num_args)
     }
 
-    fn call_funclet(&mut self, label: &str) {
-        let _ = self.mir.call(label, 0);
-    }
+    fn call_funclet(&mut self, _label: &str) {}
 
-    fn ret(&mut self) {
-        self.branch(".ret");
-    }
+    fn ret(&mut self) {}
 
     fn prologue_fast(&mut self, _cap: usize, _count_states: usize, _count_obs: usize) {}
     fn epilogue_fast(

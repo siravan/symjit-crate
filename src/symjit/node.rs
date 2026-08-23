@@ -6,6 +6,7 @@ use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
+// use super::generator::Generator;
 use super::mir::Mir;
 use super::operation::Operation;
 use super::symbol::{Loc, Symbol};
@@ -222,23 +223,21 @@ impl Node {
     pub fn topology(&self) -> String {
         match self {
             Self::Void => "?".into(),
-            Self::Var { .. } => "X".into(),
-            /*
+            // Self::Var { .. } => "x".into(),
             Self::Var { sym } => match sym.borrow().loc {
                 Loc::Stack(_) => "x".into(),
                 Loc::Param(_) => "p".into(),
                 Loc::Mem(_) => "q".into(),
             },
-            */
-            Self::Const { idx, .. } => format!("C[{}]", idx),
+            Self::Const { .. } => "c".into(),
             Self::Unary { op, arg, .. } => {
                 format!("{}[{}]", &arg.topology(), op.as_str())
             }
             Self::Binary {
                 op, left, right, ..
             } => {
-                let l = left.topology();
-                let r = right.topology();
+                let mut l = left.topology();
+                let mut r = right.topology();
 
                 let op: String = match op {
                     Operation::Plus => "+".into(),
@@ -248,11 +247,9 @@ impl Node {
                     op => format!("[{}]", op.as_str()),
                 };
 
-                /*
                 if (op == "+" || op == "*") && l < r {
                     (l, r) = (r, l);
                 }
-                */
 
                 format!("{}{}{}", &l, &r, &op)
             }
@@ -261,7 +258,7 @@ impl Node {
 
     /// The main entry point to compile an expression tree
     /// should be called on the root of the expression tree
-    pub fn compile_tree(&self, mir: &mut Mir) -> Result<u8> {
+    pub fn compile_tree(&mut self, mir: &mut Mir) -> Result<u8> {
         self.compile(mir, 0)
     }
 
@@ -543,18 +540,14 @@ impl Node {
         }
     }
 
-    pub fn call_external(&self) -> Result<(i32, i32)> {
-        if let Node::Binary {
-            op, left, right, ..
-        } = self
-        {
+    pub fn call_external(&self) -> Result<i32> {
+        if let Node::Binary { op, right, .. } = self {
             if op.as_str() != "_call_" {
                 return Err(anyhow!("external fun main node should be `_call_`"));
             }
 
-            let l = left.as_int_const().unwrap();
             let r = right.as_int_const().unwrap();
-            Ok((l, r))
+            Ok(r)
         } else {
             unreachable!();
         }
@@ -634,76 +627,6 @@ impl Node {
                 let mut s = HashSet::new();
                 s.insert(sym.borrow().loc);
                 s
-            }
-        }
-    }
-
-    pub fn subroutine(&self, args: &[Rc<RefCell<Symbol>>], n: &mut u8) -> Node {
-        match self {
-            Node::Void => Node::Void,
-            Node::Unary {
-                op,
-                arg,
-                power,
-                ershov,
-                h,
-                w,
-            } => Node::Unary {
-                op: op.clone(),
-                arg: Box::new(arg.subroutine(args, n)),
-                power: *power,
-                ershov: *ershov,
-                h: *h,
-                w: *w,
-            },
-            Node::Binary {
-                op,
-                left,
-                right,
-                power,
-                ershov,
-                h,
-                w,
-                cond,
-            } => {
-                let left = left.subroutine(args, n);
-                let right = right.subroutine(args, n);
-                Node::Binary {
-                    op: op.clone(),
-                    left: Box::new(left),
-                    right: Box::new(right),
-                    power: *power,
-                    ershov: *ershov,
-                    h: *h,
-                    w: *w,
-                    cond: *cond,
-                }
-            }
-            Node::Const { val, idx } => Node::Const {
-                val: *val,
-                idx: *idx,
-            },
-            Node::Var { .. } => {
-                let v = Node::Var {
-                    sym: args[*n as usize].clone(),
-                };
-                *n += 1;
-                v
-            }
-        }
-    }
-
-    pub fn caller(&self, mir: &mut Mir, locs: &mut Vec<Loc>) {
-        match self {
-            Node::Void | Node::Const { .. } => {}
-            Node::Unary { arg, .. } => arg.caller(mir, locs),
-            Node::Binary { left, right, .. } => {
-                left.caller(mir, locs);
-                right.caller(mir, locs);
-            }
-            Node::Var { sym } => {
-                let loc = sym.borrow().loc;
-                locs.push(loc);
             }
         }
     }

@@ -325,7 +325,6 @@ mod runnable;
 mod serializer;
 mod statement;
 mod symbol;
-mod topology;
 mod types;
 mod utils;
 

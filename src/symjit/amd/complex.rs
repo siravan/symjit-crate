@@ -234,42 +234,6 @@ impl Generator for AmdComplexGenerator {
         self.save_stack(Reg::Ret, idx);
     }
 
-    fn load_args(&mut self, locs: Vec<Loc>, ultra: bool) {
-        load_args_helper(
-            &mut self.amd,
-            &self.config,
-            &locs[..],
-            ultra,
-            16,
-            |amd, loc, dst| {
-                load_f64x2_from_loc(amd, 0, loc);
-                save_f64x2_to_loc(amd, 0, dst);
-            },
-            |amd, arg, loc| {
-                load_f64x2_from_loc(amd, arg, loc);
-            },
-        );
-    }
-
-    fn save_args(&mut self, num_args: u8, ultra: bool) {
-        save_args_helper(
-            &mut self.amd,
-            &self.config,
-            num_args,
-            ultra,
-            16,
-            |amd, arg| {
-                amd.vmovdd_xmm_indexed(arg, STACK, Amd::RAX, 8);
-            },
-            |amd, arg, loc| {
-                save_f64x2_to_loc(amd, arg, loc);
-            },
-        );
-    }
-
-    fn load_args_complex(&mut self, _locs: Vec<Loc>, _ultra: bool) {}
-    fn save_args_complex(&mut self, _num_args: u8, _ultra: bool) {}
-
     fn neg(&mut self, dst: Reg, s1: Reg) {
         self.load_const_by_name(Reg::Temp, "_minus_zero_");
         self.amd.vunpckldd(ϕ(Reg::Temp), ϕ(Reg::Temp), ϕ(Reg::Temp));
