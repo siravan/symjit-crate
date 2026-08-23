@@ -63,6 +63,11 @@ pub trait Generator {
     fn load_stack_complex(&mut self, xd: Reg, yd: Reg, idx: u32);
     fn save_stack_complex(&mut self, xs: Reg, ys: Reg, idx: u32);
 
+    fn load_args(&mut self, locs: Vec<Loc>, ultra: bool);
+    fn save_args(&mut self, num_args: u8, ultra: bool);
+    fn load_args_complex(&mut self, locs: Vec<Loc>, ultra: bool);
+    fn save_args_complex(&mut self, num_args: u8, ultra: bool);
+
     fn save_mem_result(&mut self, idx: u32);
     fn save_stack_result(&mut self, idx: u32);
 

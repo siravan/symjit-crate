@@ -385,6 +385,79 @@ impl Generator for AmdVectorF64x4Generator {
         self.save_stack(Reg::Ret, idx);
     }
 
+    fn load_args(&mut self, locs: Vec<Loc>, ultra: bool) {
+        load_args_helper(
+            &mut self.amd,
+            &self.config,
+            &locs[..],
+            ultra,
+            16,
+            |amd, loc, dst| {
+                load_f64x4_from_loc(amd, 0, loc);
+                save_f64x4_to_loc(amd, 0, dst);
+            },
+            |amd, arg, loc| {
+                load_f64x4_from_loc(amd, arg, loc);
+            },
+        );
+    }
+
+    fn save_args(&mut self, num_args: u8, ultra: bool) {
+        save_args_helper(
+            &mut self.amd,
+            &self.config,
+            num_args,
+            ultra,
+            16,
+            |amd, arg| {
+                amd.shl_imm(Amd::RAX, 2);
+                amd.vmovpd_ymm_indexed(arg, STACK, Amd::RAX, 8);
+            },
+            |amd, arg, loc| {
+                save_f64x4_to_loc(amd, arg, loc);
+            },
+        );
+    }
+
+    fn load_args_complex(&mut self, locs: Vec<Loc>, ultra: bool) {
+        load_args_helper(
+            &mut self.amd,
+            &self.config,
+            &locs[..],
+            ultra,
+            8,
+            |amd, loc, dst| {
+                load_f64x4_from_loc(amd, 0, loc);
+                load_f64x4_from_loc(amd, 1, loc.imag());
+                save_f64x4_to_loc(amd, 0, dst);
+                save_f64x4_to_loc(amd, 1, dst.imag());
+            },
+            |amd, arg, loc| {
+                load_f64x4_from_loc(amd, 2 * arg, loc);
+                load_f64x4_from_loc(amd, 2 * arg + 1, loc.imag());
+            },
+        );
+    }
+
+    fn save_args_complex(&mut self, num_args: u8, ultra: bool) {
+        save_args_helper(
+            &mut self.amd,
+            &self.config,
+            num_args,
+            ultra,
+            8,
+            |amd, arg| {
+                amd.shl_imm(Amd::RAX, 2);
+                amd.vmovpd_ymm_indexed(2 * arg, STACK, Amd::RAX, 8);
+                amd.vmovpd_ymm_indexed_mem(2 * arg + 1, STACK, Amd::RAX, 8, 32);
+            },
+            |amd, arg, loc| {
+                save_f64x4_to_loc(amd, 2 * arg, loc);
+                save_f64x4_to_loc(amd, 2 * arg + 1, loc.imag());
+            },
+        );
+    }
+
     fn neg(&mut self, dst: Reg, s1: Reg) {
         self.load_const_by_name(Reg::Temp, "_minus_zero_");
         self.xor(dst, s1, Reg::Temp);

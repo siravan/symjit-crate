@@ -111,6 +111,33 @@ impl Amd {
         }
     }
 
+    pub fn modrm_sib_mem(&mut self, reg: u8, base: u8, index: u8, scale: u8, offset: i32) {
+        let small = (-128..128).contains(&offset);
+
+        if small {
+            self.append_byte(0x44 + ((reg & 7) << 3))
+        } else {
+            self.append_byte(0x84 + ((reg & 7) << 3))
+        }
+
+        let scale = match scale {
+            1 => 0,
+            2 => 1 << 6,
+            4 => 2 << 6,
+            8 => 3 << 6,
+            _ => {
+                panic!("scale in SIB should be 1, 2, 4, or, 8.")
+            }
+        };
+        self.append_byte((scale | (index & 7) << 3) | (base & 7));
+
+        if small {
+            self.append_byte(offset as u8);
+        } else {
+            self.append_word(offset as u32);
+        }
+    }
+
     pub fn vex2pd(&mut self, reg: u8, vreg: u8) {
         // This is the two-byte VEX prefix (VEX2) for packed-double (pd)
         // and 256-bit ymm registers
@@ -479,6 +506,12 @@ impl Amd {
         self.vex_pd(reg, 0, base, index);
         self.append_byte(0x10);
         self.modrm_sib(reg, base, index, scale);
+    }
+
+    pub fn vmovpd_ymm_indexed_mem(&mut self, reg: u8, base: u8, index: u8, scale: u8, offset: i32) {
+        self.vex_pd(reg, 0, base, index);
+        self.append_byte(0x10);
+        self.modrm_sib_mem(reg, base, index, scale, offset);
     }
 
     pub fn vmovpd_ymm_label(&mut self, reg: u8, label: &str) {
@@ -1115,6 +1148,20 @@ impl Amd {
         self.append_word((imm64 >> 32) as u32);
     }
 
+    pub fn movsx(&mut self, reg: u8, rm: u8) {
+        self.rex(reg, rm);
+        self.append_byte(0x0f);
+        self.append_byte(0xbf);
+        self.modrm_reg(reg, rm);
+    }
+
+    pub fn movzx(&mut self, reg: u8, rm: u8) {
+        self.rex(reg, rm);
+        self.append_byte(0x0f);
+        self.append_byte(0xb7);
+        self.modrm_reg(reg, rm);
+    }
+
     pub fn call(&mut self, reg: u8) {
         if reg < 8 {
             self.append_bytes(&[0xff, 0xd0 | reg]);
@@ -1228,6 +1275,20 @@ impl Amd {
         self.append_byte(0x81);
         self.modrm_reg(7, rm);
         self.append_word(imm);
+    }
+
+    pub fn shl_imm(&mut self, rm: u8, imm: u8) {
+        self.rex(0, rm);
+        self.append_byte(0xc1);
+        self.modrm_reg(4, rm);
+        self.append_byte(imm);
+    }
+
+    pub fn shr_imm(&mut self, rm: u8, imm: u8) {
+        self.rex(0, rm);
+        self.append_byte(0xc1);
+        self.modrm_reg(5, rm);
+        self.append_byte(imm);
     }
 
     pub fn inc(&mut self, rm: u8) {

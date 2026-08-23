@@ -44,6 +44,8 @@ const BRANCH_ELSE: u8 = 10;
 const CALL: u8 = 11;
 const LABEL: u8 = 12;
 const IFELSE: u8 = 13;
+const LOAD_ARGS: u8 = 14;
+const SAVE_ARGS: u8 = 15;
 
 const FUSED_MUL_ADD: u8 = 32;
 const FUSED_MUL_SUB: u8 = 33;
@@ -185,6 +187,30 @@ impl MirWriter {
                 self.reg(*dst);
                 self.reg(*s1);
                 self.num(0, *idx);
+            }
+            Instruction::LoadArgs {
+                locs,
+                complex,
+                ultra,
+            } => {
+                self.append_byte(LOAD_ARGS);
+                let num_args = locs.len() as u8;
+                self.append_byte(
+                    num_args | if *complex { 0x80 } else { 0 } | if *ultra { 0x40 } else { 0 },
+                );
+                for loc in locs {
+                    self.loc(*loc);
+                }
+            }
+            Instruction::SaveArgs {
+                num_args,
+                complex,
+                ultra,
+            } => {
+                self.append_byte(SAVE_ARGS);
+                self.append_byte(
+                    num_args | if *complex { 0x80 } else { 0 } | if *ultra { 0x40 } else { 0 },
+                );
             }
             Instruction::Branch { label } => {
                 self.append_byte(BRANCH);
@@ -657,6 +683,29 @@ impl MirIterator {
                 let ys = self.reg()?;
                 let loc = self.loc()?;
                 Ok(Instruction::SaveComplex { xs, ys, loc })
+            }
+            LOAD_ARGS => {
+                let b = self.pop()?;
+                let complex = b & 0x80 != 0;
+                let ultra = b & 0x40 != 0;
+                let num_args = b & 0x3f;
+                let locs: Vec<Loc> = (0..num_args).map(|_| self.loc().unwrap()).collect();
+                Ok(Instruction::LoadArgs {
+                    locs,
+                    complex,
+                    ultra,
+                })
+            }
+            SAVE_ARGS => {
+                let b = self.pop()?;
+                let complex = b & 0x80 != 0;
+                let ultra = b & 0x40 != 0;
+                let num_args = b & 0x3f;
+                Ok(Instruction::SaveArgs {
+                    num_args,
+                    complex,
+                    ultra,
+                })
             }
             BRANCH => {
                 let label = self.string()?;

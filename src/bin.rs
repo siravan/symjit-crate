@@ -1,5 +1,5 @@
 use anyhow::Result;
-use symjit::{int, var, Compiler, Config, Defuns, Expr, FastFunc};
+use symjit::{int, var, Compiler, Composer, Config, Defuns, Expr, FastFunc, Slot, Translator};
 
 fn test_simple() -> Result<()> {
     let x = Expr::var("x");
@@ -141,6 +141,52 @@ fn test_memory(n: usize) -> Result<()> {
     Ok(())
 }
 
+fn compile_external_evaluators(direct: bool) -> Result<symjit::Application> {
+    let f: Box<dyn Fn(&[f64]) -> f64 + Send + Sync> = Box::new(|args| {
+        let y = args[0];
+        3.0 + y * y + y
+    });
+
+    let g: Box<dyn Fn(&[f64]) -> f64 + Send + Sync> = Box::new(|args| {
+        let y = args[0];
+        3.0 + y * y + y
+    });
+
+    let mut defuns = Defuns::new();
+    defuns.add_sliced_func("f", f)?;
+    defuns.add_sliced_func("g", g)?;
+
+    let mut config = Config::default();
+    config.set_complex(false);
+    config.set_direct(direct);
+    config.set_defuns(defuns);
+
+    // Compile f(y) + f(x). The call order makes the incorrect result match the original report.
+    let mut translator = Translator::new(config);
+    translator.set_num_params(2);
+    translator.append_fun(&Slot::Temp(0), "f", &[Slot::Param(1)], true)?;
+    translator.append_fun(&Slot::Temp(1), "f", &[Slot::Param(0)], true)?;
+    translator.append_add(&Slot::Out(0), &[Slot::Temp(0), Slot::Temp(1)], 2)?;
+
+    Ok(translator.compile()?)
+}
+
+// excternal call bug fixed in v2.22.1
+fn test_external_evaluators() -> Result<()> {
+    let args = [5.0, 2.0];
+    let expected = 42.0;
+    let optimized = compile_external_evaluators(false)?.evaluate_single(&args);
+    let direct = compile_external_evaluators(true)?.evaluate_single(&args);
+
+    eprintln!("expected:             {expected}");
+    eprintln!("optimized translator: {optimized}");
+    eprintln!("direct translator:    {direct}");
+
+    assert_eq!(optimized, expected, "optimized translation is incorrect");
+    assert_eq!(direct, expected);
+    Ok(())
+}
+
 fn pass(what: &str) {
     println!("**** test {:?} passed. ****", what);
 }
@@ -170,6 +216,9 @@ pub fn main() -> Result<()> {
         test_external(p)?;
     }
     pass("external");
+
+    test_external_evaluators()?;
+    pass("external evaluator");
 
     Ok(())
 }

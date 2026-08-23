@@ -3,6 +3,8 @@ mod macros;
 
 use super::assembler::Assembler;
 use super::code::Func;
+use super::config::Config;
+use super::symbol::Loc;
 use super::utils::Reg;
 
 const SP: u8 = 31;
@@ -285,6 +287,106 @@ fn save_paired_q_to_mem(a: &mut Assembler, d1: u8, d2: u8, base: u8, idx: u32) {
     }
 }
 
+fn load_d_from_loc(a: &mut Assembler, r: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => load_d_from_mem(a, r, PARAMS, idx),
+        Loc::Stack(idx) => load_d_from_mem(a, r, STACK, idx),
+        Loc::Mem(idx) => load_d_from_mem(a, r, MEM, idx),
+    }
+}
+
+fn load_c_from_loc(a: &mut Assembler, r: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => load_q_from_mem(a, r, PARAMS, idx / 2),
+        Loc::Stack(idx) => load_q_from_mem(a, r, STACK, idx / 2),
+        Loc::Mem(idx) => load_q_from_mem(a, r, MEM, idx / 2),
+    }
+}
+
+fn load_q_from_loc(a: &mut Assembler, r: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => load_q_from_mem(a, r, PARAMS, idx),
+        Loc::Stack(idx) => load_q_from_mem(a, r, STACK, idx),
+        Loc::Mem(idx) => load_q_from_mem(a, r, MEM, idx),
+    }
+}
+
+fn save_d_to_loc(a: &mut Assembler, r: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => save_d_to_mem(a, r, PARAMS, idx),
+        Loc::Stack(idx) => save_d_to_mem(a, r, STACK, idx),
+        Loc::Mem(idx) => save_d_to_mem(a, r, MEM, idx),
+    }
+}
+
+fn save_c_to_loc(a: &mut Assembler, r: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => save_q_to_mem(a, r, PARAMS, idx / 2),
+        Loc::Stack(idx) => save_q_to_mem(a, r, STACK, idx / 2),
+        Loc::Mem(idx) => save_q_to_mem(a, r, MEM, idx / 2),
+    }
+}
+
+fn save_q_to_loc(a: &mut Assembler, r: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => save_q_to_mem(a, r, PARAMS, idx),
+        Loc::Stack(idx) => save_q_to_mem(a, r, STACK, idx),
+        Loc::Mem(idx) => save_q_to_mem(a, r, MEM, idx),
+    }
+}
+
+/*
+fn load_paired_d_from_loc(a: &mut Assembler, r1: u8, r2: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => load_paired_d_from_mem(a, r1, r2, PARAMS, idx),
+        Loc::Stack(idx) => load_paired_d_from_mem(a, r1, r2, STACK, idx),
+        Loc::Mem(idx) => load_paired_d_from_mem(a, r1, r2, MEM, idx),
+    }
+}
+
+fn load_paired_c_from_loc(a: &mut Assembler, r1: u8, r2: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => load_paired_q_from_mem(a, r1, r2, PARAMS, idx / 2),
+        Loc::Stack(idx) => load_paired_q_from_mem(a, r1, r2, STACK, idx / 2),
+        Loc::Mem(idx) => load_paired_q_from_mem(a, r1, r2, MEM, idx / 2),
+    }
+}
+*/
+
+fn load_paired_q_from_loc(a: &mut Assembler, r1: u8, r2: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => load_paired_q_from_mem(a, r1, r2, PARAMS, idx),
+        Loc::Stack(idx) => load_paired_q_from_mem(a, r1, r2, STACK, idx),
+        Loc::Mem(idx) => load_paired_q_from_mem(a, r1, r2, MEM, idx),
+    }
+}
+
+/*
+fn save_paired_d_to_loc(a: &mut Assembler, r1: u8, r2: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => save_paired_d_to_mem(a, r1, r2, PARAMS, idx),
+        Loc::Stack(idx) => save_paired_d_to_mem(a, r1, r2, STACK, idx),
+        Loc::Mem(idx) => save_paired_d_to_mem(a, r1, r2, MEM, idx),
+    }
+}
+
+fn save_paired_c_to_loc(a: &mut Assembler, r1: u8, r2: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => save_paired_q_to_mem(a, r1, r2, PARAMS, idx / 2),
+        Loc::Stack(idx) => save_paired_q_to_mem(a, r1, r2, STACK, idx / 2),
+        Loc::Mem(idx) => save_paired_q_to_mem(a, r1, r2, MEM, idx / 2),
+    }
+}
+*/
+
+fn save_paired_q_to_loc(a: &mut Assembler, r1: u8, r2: u8, loc: Loc) {
+    match loc {
+        Loc::Param(idx) => save_paired_q_to_mem(a, r1, r2, PARAMS, idx),
+        Loc::Stack(idx) => save_paired_q_to_mem(a, r1, r2, STACK, idx),
+        Loc::Mem(idx) => save_paired_q_to_mem(a, r1, r2, MEM, idx),
+    }
+}
+
 fn load_x_from_mem(a: &mut Assembler, r: u8, base: u8, idx: u32) {
     assert!(r != 9);
 
@@ -353,6 +455,78 @@ fn add_stack(a: &mut Assembler, size: u32) {
     emit(a, arm! {add sp, sp, #size & 0x0fff});
 }
 */
+
+fn pack_locs(a: &mut Assembler, locs: &[Loc]) {
+    for (i, loc) in locs.iter().enumerate() {
+        let r = i / 4;
+        if let Loc::Stack(idx) = loc {
+            assert!(*idx < 65536);
+            match i % 4 {
+                0 => emit(a, arm! {movz x(r), #idx/2}),
+                1 => emit(a, arm! {movk_lsl16 x(r), #idx/2}),
+                2 => emit(a, arm! {movk_lsl32 x(r), #idx/2}),
+                3 => emit(a, arm! {movk_lsl48 x(r), #idx/2}),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+fn load_args_helper<F1, F2>(
+    a: &mut Assembler,
+    config: &Config,
+    locs: &[Loc],
+    ultra: bool,
+    n: usize,
+    f1: F1,
+    f2: F2,
+) where
+    F1: Fn(&mut Assembler, Loc, Loc),
+    F2: Fn(&mut Assembler, u8, Loc),
+{
+    for (arg, loc) in locs.iter().enumerate() {
+        if arg >= n {
+            f1(a, *loc, config.location(arg as u8))
+        }
+    }
+
+    if ultra {
+        pack_locs(a, locs.get(0..n).unwrap_or(&locs));
+    } else {
+        for (arg, loc) in locs.iter().enumerate() {
+            if arg < n {
+                f2(a, arg as u8, *loc)
+            }
+        }
+    }
+}
+
+fn save_args_helper<F1, F2>(
+    a: &mut Assembler,
+    config: &Config,
+    num_args: u8,
+    ultra: bool,
+    n: u8,
+    f1: F1,
+    f2: F2,
+) where
+    F1: Fn(&mut Assembler, u8),
+    F2: Fn(&mut Assembler, u8, Loc),
+{
+    if ultra {
+        for arg in 0..num_args.min(n) {
+            let r = arg / 4;
+            let immr = (arg as u32 % 4) * 16;
+            let imml = immr + 15;
+            emit(a, arm! {ubfm x(8), x(r), #immr, #imml});
+            f1(a, arg)
+        }
+    } else {
+        for arg in 0..num_args.min(n) {
+            f2(a, arg, config.location(arg))
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

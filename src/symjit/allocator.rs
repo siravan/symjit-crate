@@ -205,6 +205,26 @@ impl GreedyAllocator {
                     let ys = self.consume(ip, ys);
                     self.push(Instruction::SaveComplex { xs, ys, loc });
                 }
+                Instruction::LoadArgs {
+                    locs,
+                    complex,
+                    ultra,
+                } => self.push(Instruction::LoadArgs {
+                    locs,
+                    complex,
+                    ultra,
+                }),
+                Instruction::SaveArgs {
+                    num_args,
+                    complex,
+                    ultra,
+                } => {
+                    self.push(Instruction::SaveArgs {
+                        num_args,
+                        complex,
+                        ultra,
+                    });
+                }
                 Instruction::Mov { dst, s1 } => {
                     let (dst, s1) = self.unary_op(ip, dst, s1);
                     self.push(Instruction::Mov { dst, s1 });
@@ -320,7 +340,7 @@ impl GreedyAllocator {
                 if alloc.life <= ip {
                     if alloc.loc.is_none() {
                         return (self.assign(r, s, None), false);
-                    } else if q.is_none() || rand::random_bool(0.2) {
+                    } else if q.is_none() {
                         q = Some(r);
                     }
                 }
@@ -460,6 +480,29 @@ impl GreedyAllocator {
                         self.allocs[r as usize].loc = Some(loc.imag());
                     }
                 }
+                Instruction::LoadArgs {
+                    locs,
+                    complex,
+                    ultra,
+                } => {
+                    self.locs.extend(&locs);
+                    self.push(Instruction::LoadArgs {
+                        locs,
+                        complex,
+                        ultra,
+                    })
+                }
+                Instruction::SaveArgs {
+                    num_args,
+                    complex,
+                    ultra,
+                } => {
+                    self.push(Instruction::SaveArgs {
+                        num_args,
+                        complex,
+                        ultra,
+                    });
+                }
                 Instruction::Mov { dst, s1 } => {
                     let s1 = self.deallocate(s1);
 
@@ -511,27 +554,22 @@ impl GreedyAllocator {
                     }
                     self.locs.insert(cond);
                 }
-                Instruction::Branch { .. } => {
-                    if let Instruction::Branch { label } = ins.clone() {
-                        self.push(Instruction::Branch { label });
-                    }
+                Instruction::Branch { label } => {
+                    self.push(Instruction::Branch { label });
                     self.reset_allocs(); // needed?
                 }
-                Instruction::BranchIf { .. } => {
-                    if let Instruction::BranchIf {
+                Instruction::BranchIf {
+                    cond,
+                    label,
+                    is_else,
+                } => {
+                    let cond = self.deallocate(cond);
+                    self.push(Instruction::BranchIf {
                         cond,
                         label,
                         is_else,
-                    } = ins.clone()
-                    {
-                        let cond = self.deallocate(cond);
-                        self.push(Instruction::BranchIf {
-                            cond,
-                            label,
-                            is_else,
-                        });
-                        self.reset_allocs();
-                    }
+                    });
+                    self.reset_allocs();
                 }
                 Instruction::Call { .. } | Instruction::Label { .. } => {
                     self.push(ins.clone());
