@@ -3,7 +3,7 @@ use super::super::config::{Config, KernelType, ABI_AREA};
 use super::super::generator::{FuncletType, Generator, StackRegions};
 use super::super::symbol::Loc;
 use super::super::utils::align_stack;
-use super::super::utils::{is_external_func, DataType, Reg};
+use super::super::utils::{DataType, Reg};
 use anyhow::{anyhow, Result};
 
 use super::asm::{Amd, RoundingMode};
@@ -689,7 +689,7 @@ impl Generator for AmdVectorF64x4Generator {
     }
 
     fn call(&mut self, op: &str, num_args: usize) -> Result<()> {
-        if is_external_func(op) {
+        if self.config.is_external_func(op) {
             return self.call_external(op, num_args);
         }
 

@@ -19,7 +19,6 @@ use super::generator::Generator;
 use super::machine::MachineCode;
 use super::serializer::MirWriter;
 use super::symbol::Loc;
-use super::utils::is_external_func;
 use super::utils::{bool_to_f64, Compiled, CompiledFunc, Reg};
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash)]
@@ -1180,7 +1179,7 @@ impl Mir {
             }
         }
 
-        let op = if self.config.is_complex() && !is_external_func(op) {
+        let op = if self.config.is_complex() && self.config.is_external_func(op) {
             &format!("cplx_{}", &op)
         } else {
             op

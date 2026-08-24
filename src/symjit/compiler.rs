@@ -1141,13 +1141,13 @@ impl IndirectTranslator {
                 self.assign(&Slot::Arg(i), args[i].clone())?;
             }
 
-            let op = format!("${}", op);
+            // let op = format!("${}", op);
             // This is a hack to prevent CSE for external call.
             // This will be replaced with a better implementation
             // in version 2.23.
             let l = self.const_node(rand::random());
             let r = self.const_node(n as f64);
-            let n = self.binary_node(op.as_str(), l, r)?;
+            let n = self.binary_node(op, l, r)?;
             // Important! To prevent call from separating from arguments setup.
             self.join_rhs.insert(lhs.clone());
             self.assign(lhs, n)?;

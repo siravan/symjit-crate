@@ -5,7 +5,7 @@ use super::super::code::Func;
 use super::super::config::{Config, KernelType, ABI_AREA};
 use super::super::generator::{FuncletType, Generator, StackRegions};
 use super::super::symbol::Loc;
-use super::super::utils::{align_stack, is_external_func, Reg};
+use super::super::utils::{align_stack, Reg};
 
 use super::*;
 
@@ -594,7 +594,7 @@ impl Generator for ArmSimdGenerator {
     }
 
     fn call(&mut self, op: &str, num_args: usize) -> Result<()> {
-        if is_external_func(op) {
+        if self.config.is_external_func(op) {
             return self.call_external(op, num_args);
         }
 

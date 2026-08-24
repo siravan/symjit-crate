@@ -206,10 +206,10 @@ impl Defuns {
             _ => trampoline_homogenous::<T> as *const c_void,
         };
 
-        let op = format!("${}", name);
+        // let op = format!("${}", name);
 
         self.funcs.insert(
-            op,
+            name.to_string(),
             Func::Slice {
                 f_scalar: trampoline,
                 f_simd: trampoline_simd,
