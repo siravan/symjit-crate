@@ -15,10 +15,10 @@ use super::model::{CellModel, Equation, Program, Variable};
 use super::node::Node;
 use super::operation::Operation;
 use super::parser::Parser;
+use super::runnable::Application;
 use super::symbol::Loc;
 use super::types::Element;
 use super::utils::Compiled;
-use super::Application;
 
 // #[derive(Debug)]
 pub struct Compiler {
@@ -602,6 +602,8 @@ impl Composer for Translator {
     }
 
     fn compile(&mut self) -> Result<Application> {
+        self.config.can_compile()?;
+
         if self.spy {
             self.dump();
         }
@@ -1111,6 +1113,7 @@ impl IndirectTranslator {
         let mut v: Vec<Node> = Vec::new();
         for a in args.iter() {
             let p = self.expr(a, is_real);
+
             if is_real {
                 let arg = self.unary_node("real", p)?;
                 v.push(arg);
@@ -1137,11 +1140,14 @@ impl IndirectTranslator {
             let rhs = self.binary_node(op, args.remove(0), args.remove(0))?;
             self.assign(lhs, rhs)?;
         } else {
+            /*
             for i in 0..n {
                 self.assign(&Slot::Arg(i), args[i].clone())?;
             }
+            */
 
-            // let op = format!("${}", op);
+            self.builder.load_args(args)?;
+
             // This is a hack to prevent CSE for external call.
             // This will be replaced with a better implementation
             // in version 2.23.
@@ -1149,7 +1155,7 @@ impl IndirectTranslator {
             let r = self.const_node(n as f64);
             let n = self.binary_node(op, l, r)?;
             // Important! To prevent call from separating from arguments setup.
-            self.join_rhs.insert(lhs.clone());
+            self.join_rhs.insert(*lhs);
             self.assign(lhs, n)?;
         }
 

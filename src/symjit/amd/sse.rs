@@ -1,6 +1,6 @@
 use super::super::code::Func;
 use super::super::config::{Config, KernelType, ABI_AREA};
-use super::super::generator::{FuncletType, Generator, StackRegions};
+use super::super::generator::{Generator, StackRegions};
 use super::super::symbol::Loc;
 use super::super::utils::align_stack;
 use super::super::utils::{DataType, Reg};
@@ -85,10 +85,17 @@ impl AmdSSEGenerator {
     fn call_external(&mut self, op: &str, num_args: usize) -> Result<()> {
         let cap = ABI_AREA as u32;
 
-        self.amd.mov_reg_label(ARGS[0], &format!("_env_{}_", op));
-        self.amd.lea_mem(ARGS[1], STACK, (cap * REG_SIZE) as i32);
-        self.amd.mov_imm(ARGS[2], num_args as u32);
-        self.amd.lea_mem(ARGS[3], SP, 4 * REG_SIZE as i32);
+        if self.config.is_kernel_func(op) {
+            self.amd.lea_mem(ARGS[0], SP, 4 * REG_SIZE as i32);
+            self.amd.xor(ARGS[1], ARGS[1]);
+            self.amd.xor(ARGS[2], ARGS[2]);
+            self.amd.lea_mem(ARGS[3], STACK, (cap * REG_SIZE) as i32);
+        } else {
+            self.amd.mov_reg_label(ARGS[0], &format!("_env_{}_", op));
+            self.amd.lea_mem(ARGS[1], STACK, (cap * REG_SIZE) as i32);
+            self.amd.mov_imm(ARGS[2], num_args as u32);
+            self.amd.lea_mem(ARGS[3], SP, 4 * REG_SIZE as i32);
+        }
 
         self.amd.call_indirect(&format!("_func_{}_", op));
         self.load_stack(Reg::Ret, 4);
@@ -121,10 +128,6 @@ impl Generator for AmdSSEGenerator {
 
     fn three_address(&self) -> bool {
         false
-    }
-
-    fn support_funclet(&self) -> FuncletType {
-        FuncletType::Complex
     }
 
     fn seal(&mut self) {
@@ -502,10 +505,6 @@ impl Generator for AmdSSEGenerator {
         self.load_stack(Reg::Temp, 5);
 
         Ok(())
-    }
-
-    fn call_funclet(&mut self, label: &str) {
-        self.amd.call_relative(label);
     }
 
     fn ret(&mut self) {

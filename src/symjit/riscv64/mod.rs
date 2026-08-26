@@ -3,7 +3,7 @@ mod macros;
 
 use super::assembler::{Assembler, Jumper};
 use super::config::Config;
-use super::generator::{FuncletType, Generator};
+use super::generator::Generator;
 use super::symbol::Loc;
 use super::utils::{align_stack, Reg};
 use anyhow::Result;
@@ -311,10 +311,6 @@ impl Generator for RiscV {
 
     fn count_shadows(&self) -> u8 {
         14
-    }
-
-    fn support_funclet(&self) -> FuncletType {
-        FuncletType::None
     }
 
     fn seal(&mut self) {
@@ -722,10 +718,6 @@ impl Generator for RiscV {
         self.load_stack(Reg::Ret, 0);
         self.load_stack(Reg::Temp, 1);
         Ok(())
-    }
-
-    fn call_funclet(&mut self, _label: &str) {
-        todo!();
     }
 
     fn ret(&mut self) {

@@ -31,6 +31,9 @@ pub enum Statement {
         label: String,
         is_else: bool,
     },
+    LoadArgs {
+        args: Vec<Node>,
+    },
 }
 
 impl Statement {
@@ -49,6 +52,10 @@ impl Statement {
             arg,
             num_args,
         }
+    }
+
+    pub fn load_args(args: Vec<Node>) -> Statement {
+        Statement::LoadArgs { args }
     }
 
     pub fn add_topology(&mut self, topology: &mut Topology) {
@@ -126,6 +133,12 @@ impl Statement {
             } => {
                 let cond = cond.compile_tree(ir)?;
                 ir.branch_if(reg(cond), label, *is_else);
+            }
+            Statement::LoadArgs { args } => {
+                for (src, dst) in args.iter().zip(topology.args.iter()) {
+                    let r = src.compile_tree(ir)?;
+                    Self::save(ir, r, &Node::Var { sym: dst.clone() });
+                }
             }
         };
 

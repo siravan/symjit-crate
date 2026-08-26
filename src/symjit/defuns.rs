@@ -9,6 +9,7 @@ use wide::{f64x2, f64x4};
 
 type ExternalFunction<T> = Box<dyn Fn(&[T]) -> T + Send + Sync>;
 
+use super::applet::Applet;
 use super::code::{BinaryFunc, BinaryFuncCplx, Func, UnaryFunc, UnaryFuncCplx, VirtualTable};
 use super::config::SLICE_CAP;
 use super::types::{ElemType, Element};
@@ -180,6 +181,11 @@ impl Defuns {
             .insert(format!("cplx_{}", name), Func::BinaryCplx(f));
     }
 
+    pub fn add_applet(&mut self, name: &str, app: Applet) {
+        self.funcs
+            .insert(name.to_string(), Func::App(Box::new(app)));
+    }
+
     pub fn add_sliced_func<T>(&mut self, name: &str, closure: ExternalFunction<T>) -> Result<()>
     where
         T: Copy + Sized + Element,
@@ -205,8 +211,6 @@ impl Defuns {
             }
             _ => trampoline_homogenous::<T> as *const c_void,
         };
-
-        // let op = format!("${}", name);
 
         self.funcs.insert(
             name.to_string(),

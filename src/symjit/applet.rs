@@ -45,6 +45,14 @@ impl Applet {
         })
     }
 
+    pub fn scalar_ptr(&self) -> Option<CompiledFunc<f64>> {
+        self.compiled.as_ref().map(|f| f.func())
+    }
+
+    pub fn simd_ptr(&self) -> Option<CompiledFunc<f64>> {
+        self.compiled_simd.as_ref().map(|f| f.func())
+    }
+
     /// Generic evaluate function for compiled Symbolica expressions
     pub fn evaluate<T>(&self, args: &[T], outs: &mut [T])
     where

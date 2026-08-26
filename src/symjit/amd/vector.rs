@@ -1,6 +1,6 @@
 use super::super::code::Func;
 use super::super::config::{Config, KernelType, ABI_AREA};
-use super::super::generator::{FuncletType, Generator, StackRegions};
+use super::super::generator::{Generator, StackRegions};
 use super::super::symbol::Loc;
 use super::super::utils::align_stack;
 use super::super::utils::{DataType, Reg};
@@ -187,29 +187,39 @@ impl AmdVectorF64x4Generator {
 
     fn call_external(&mut self, op: &str, num_args: usize) -> Result<()> {
         let cap = ABI_AREA as i32;
+        let ker = self.config.is_kernel_func(op);
 
-        self.amd.mov_reg_label(ARGS[0], &format!("_env_{}_", op));
-        self.amd.lea_mem(ARGS[1], STACK, cap * REG_SIZE);
-        self.amd.mov_imm(ARGS[2], num_args as u32);
-        self.amd.lea_mem(ARGS[3], SP, 4 * REG_SIZE);
+        if ker {
+            self.amd.lea_mem(ARGS[0], SP, 4 * REG_SIZE);
+            self.amd.xor(ARGS[1], ARGS[1]);
+            self.amd.xor(ARGS[2], ARGS[2]);
+            self.amd.lea_mem(ARGS[3], STACK, cap * REG_SIZE);
+        } else {
+            self.amd.mov_reg_label(ARGS[0], &format!("_env_{}_", op));
+            self.amd.lea_mem(ARGS[1], STACK, cap * REG_SIZE);
+            self.amd.mov_imm(ARGS[2], num_args as u32);
+            self.amd.lea_mem(ARGS[3], SP, 4 * REG_SIZE);
+        }
+
         self.vzeroupper();
-
         self.amd.call_indirect(&format!("_simd_{}_", op));
 
         if self.config.is_complex() {
             let l1 = format!(".P{}", self.amd.a.ip());
             let l2 = format!(".Q{}", self.amd.a.ip());
 
-            self.amd.or(Amd::RAX, Amd::RAX);
-            self.amd.jz(&l1);
+            if !ker {
+                self.amd.or(Amd::RAX, Amd::RAX);
+                self.amd.jz(&l1);
 
-            self.amd.vmovpd_ymm_mem(2, SP, 4 * REG_SIZE);
-            self.amd.vmovpd_ymm_mem(3, SP, 5 * REG_SIZE);
-            self.amd.vshufpd(0, 2, 3, 0);
-            self.amd.vshufpd(1, 2, 3, 0x0f);
+                self.amd.vmovpd_ymm_mem(2, SP, 4 * REG_SIZE);
+                self.amd.vmovpd_ymm_mem(3, SP, 5 * REG_SIZE);
+                self.amd.vshufpd(0, 2, 3, 0);
+                self.amd.vshufpd(1, 2, 3, 0x0f);
 
-            self.amd.jmp(&l2);
-            self.set_label(&l1);
+                self.amd.jmp(&l2);
+                self.set_label(&l1);
+            }
 
             self.amd.vmovpd_ymm_mem(0, SP, 4 * REG_SIZE);
             self.amd.vmovpd_ymm_mem(1, SP, 5 * REG_SIZE);
@@ -243,10 +253,6 @@ impl Generator for AmdVectorF64x4Generator {
 
     fn three_address(&self) -> bool {
         true
-    }
-
-    fn support_funclet(&self) -> FuncletType {
-        FuncletType::Complex
     }
 
     fn seal(&mut self) {
@@ -392,12 +398,12 @@ impl Generator for AmdVectorF64x4Generator {
             &locs[..],
             ultra,
             16,
-            |amd, loc, dst| {
-                load_f64x4_from_loc(amd, 0, loc);
+            |amd, src, dst| {
+                load_f64x4_from_loc(amd, 0, src);
                 save_f64x4_to_loc(amd, 0, dst);
             },
-            |amd, arg, loc| {
-                load_f64x4_from_loc(amd, arg, loc);
+            |amd, arg, src| {
+                load_f64x4_from_loc(amd, arg, src);
             },
         );
     }
@@ -413,8 +419,8 @@ impl Generator for AmdVectorF64x4Generator {
                 amd.shl_imm(Amd::RAX, 2);
                 amd.vmovpd_ymm_indexed(arg, STACK, Amd::RAX, 8);
             },
-            |amd, arg, loc| {
-                save_f64x4_to_loc(amd, arg, loc);
+            |amd, arg, dst| {
+                save_f64x4_to_loc(amd, arg, dst);
             },
         );
     }
@@ -426,15 +432,15 @@ impl Generator for AmdVectorF64x4Generator {
             &locs[..],
             ultra,
             8,
-            |amd, loc, dst| {
-                load_f64x4_from_loc(amd, 0, loc);
-                load_f64x4_from_loc(amd, 1, loc.imag());
+            |amd, src, dst| {
+                load_f64x4_from_loc(amd, 0, src);
+                load_f64x4_from_loc(amd, 1, src.imag());
                 save_f64x4_to_loc(amd, 0, dst);
                 save_f64x4_to_loc(amd, 1, dst.imag());
             },
-            |amd, arg, loc| {
-                load_f64x4_from_loc(amd, 2 * arg, loc);
-                load_f64x4_from_loc(amd, 2 * arg + 1, loc.imag());
+            |amd, arg, src| {
+                load_f64x4_from_loc(amd, 2 * arg, src);
+                load_f64x4_from_loc(amd, 2 * arg + 1, src.imag());
             },
         );
     }
@@ -451,9 +457,9 @@ impl Generator for AmdVectorF64x4Generator {
                 amd.vmovpd_ymm_indexed(2 * arg, STACK, Amd::RAX, 8);
                 amd.vmovpd_ymm_indexed_mem(2 * arg + 1, STACK, Amd::RAX, 8, 32);
             },
-            |amd, arg, loc| {
-                save_f64x4_to_loc(amd, 2 * arg, loc);
-                save_f64x4_to_loc(amd, 2 * arg + 1, loc.imag());
+            |amd, arg, dst| {
+                save_f64x4_to_loc(amd, 2 * arg, dst);
+                save_f64x4_to_loc(amd, 2 * arg + 1, dst.imag());
             },
         );
     }
@@ -714,10 +720,6 @@ impl Generator for AmdVectorF64x4Generator {
         }
 
         Ok(())
-    }
-
-    fn call_funclet(&mut self, label: &str) {
-        self.amd.call_relative(label);
     }
 
     fn ret(&mut self) {

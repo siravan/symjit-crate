@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use super::code::Func;
 use super::config::Config;
-use super::generator::{FuncletType, Generator};
+use super::generator::Generator;
 use super::mir::Mir;
 use super::symbol::Loc;
 use super::utils::Reg;
@@ -146,10 +146,6 @@ impl Generator for Complexifier {
 
     fn bytes(&mut self) -> Vec<u8> {
         Vec::new()
-    }
-
-    fn support_funclet(&self) -> FuncletType {
-        FuncletType::None
     }
 
     fn seal(&mut self) {}
@@ -773,10 +769,6 @@ impl Generator for Complexifier {
         }
 
         self.mir.call(op, num_args)
-    }
-
-    fn call_funclet(&mut self, label: &str) {
-        let _ = self.mir.call(label, 0);
     }
 
     fn ret(&mut self) {

@@ -1,7 +1,7 @@
 use super::super::code::Func;
 use super::super::config::KernelType;
 use super::super::config::{Config, ABI_AREA};
-use super::super::generator::{FuncletType, Generator, StackRegions};
+use super::super::generator::{Generator, StackRegions};
 use super::super::symbol::Loc;
 use super::super::utils::align_stack;
 use super::super::utils::{DataType, Reg};
@@ -79,10 +79,18 @@ impl AmdScalarGenerator {
     fn call_external(&mut self, op: &str, num_args: usize) -> Result<()> {
         let cap = ABI_AREA as u32;
 
-        self.amd.mov_reg_label(ARGS[0], &format!("_env_{}_", op));
-        self.amd.lea_mem(ARGS[1], STACK, (cap * REG_SIZE) as i32);
-        self.amd.mov_imm(ARGS[2], num_args as u32);
-        self.amd.lea_mem(ARGS[3], SP, 4 * REG_SIZE as i32);
+        if self.config.is_kernel_func(op) {
+            self.amd.lea_mem(ARGS[0], SP, 4 * REG_SIZE as i32);
+            self.amd.xor(ARGS[1], ARGS[1]);
+            self.amd.xor(ARGS[2], ARGS[2]);
+            self.amd.lea_mem(ARGS[3], STACK, (cap * REG_SIZE) as i32);
+        } else {
+            self.amd.mov_reg_label(ARGS[0], &format!("_env_{}_", op));
+            self.amd.lea_mem(ARGS[1], STACK, (cap * REG_SIZE) as i32);
+            self.amd.mov_imm(ARGS[2], num_args as u32);
+            self.amd.lea_mem(ARGS[3], SP, 4 * REG_SIZE as i32);
+        }
+
         self.vzeroupper();
 
         self.amd.call_indirect(&format!("_func_{}_", op));
@@ -116,10 +124,6 @@ impl Generator for AmdScalarGenerator {
 
     fn three_address(&self) -> bool {
         true
-    }
-
-    fn support_funclet(&self) -> FuncletType {
-        FuncletType::Complex
     }
 
     fn seal(&mut self) {
@@ -274,12 +278,12 @@ impl Generator for AmdScalarGenerator {
             &locs[..],
             ultra,
             16,
-            |amd, loc, dst| {
-                load_f64_from_loc(amd, 0, loc);
+            |amd, src, dst| {
+                load_f64_from_loc(amd, 0, src);
                 save_f64_to_loc(amd, 0, dst);
             },
-            |amd, arg, loc| {
-                load_f64_from_loc(amd, arg as u8, loc);
+            |amd, arg, src| {
+                load_f64_from_loc(amd, arg, src);
             },
         );
     }
@@ -294,8 +298,8 @@ impl Generator for AmdScalarGenerator {
             |amd, arg| {
                 amd.vmovsd_xmm_indexed(arg, STACK, Amd::RAX, 8);
             },
-            |amd, arg, loc| {
-                save_f64_to_loc(amd, arg, loc);
+            |amd, arg, dst| {
+                save_f64_to_loc(amd, arg, dst);
             },
         );
     }
@@ -307,12 +311,12 @@ impl Generator for AmdScalarGenerator {
             &locs[..],
             ultra,
             16,
-            |amd, loc, dst| {
-                load_f64x2_from_loc(amd, 0, loc);
+            |amd, src, dst| {
+                load_f64x2_from_loc(amd, 0, src);
                 save_f64x2_to_loc(amd, 0, dst);
             },
-            |amd, arg, loc| {
-                load_f64x2_from_loc(amd, arg as u8, loc);
+            |amd, arg, src| {
+                load_f64x2_from_loc(amd, arg, src);
             },
         );
     }
@@ -327,8 +331,8 @@ impl Generator for AmdScalarGenerator {
             |amd, arg| {
                 amd.vmovdd_xmm_indexed(arg, STACK, Amd::RAX, 8);
             },
-            |amd, arg, loc| {
-                save_f64_to_loc(amd, arg, loc);
+            |amd, arg, dst| {
+                save_f64_to_loc(amd, arg, dst);
             },
         );
     }
@@ -588,10 +592,6 @@ impl Generator for AmdScalarGenerator {
         self.load_stack(Reg::Temp, 5);
 
         Ok(())
-    }
-
-    fn call_funclet(&mut self, label: &str) {
-        self.amd.call_relative(label);
     }
 
     fn ret(&mut self) {

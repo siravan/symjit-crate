@@ -59,3 +59,7 @@ path = "src/kernels.rs"
 [[bin]]
 name = "profiler"
 path = "src/profile.rs"
+
+[[bin]]
+name = "funcs"
+path = "src/funcs.rs"

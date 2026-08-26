@@ -3,7 +3,7 @@ use anyhow::Result;
 use super::super::assembler::{Assembler, Jumper};
 use super::super::code::Func;
 use super::super::config::{Config, ABI_AREA};
-use super::super::generator::{FuncletType, Generator};
+use super::super::generator::Generator;
 use super::super::symbol::Loc;
 use super::super::utils::{align_stack, Reg};
 
@@ -55,11 +55,19 @@ impl ArmGenerator {
     */
 
     fn call_external(&mut self, op: &str, num_args: usize) -> Result<()> {
-        load_x_from_label(&mut self.a, 0, &format!("_env_{}_", op));
         let ofs = ABI_AREA as u32 * REG_SIZE;
-        self.emit(arm! {add x(1), x(STACK), #ofs});
-        self.emit(arm! {movz x(2), #num_args});
-        self.emit(arm! {add x(3), x(SP), #0});
+
+        if self.config.is_kernel_func(op) {
+            self.emit(arm! {add x(0), x(SP), #0});
+            self.emit(arm! {eor x(1), x(1), x(1)});
+            self.emit(arm! {eor x(2), x(2), x(2)});
+            self.emit(arm! {add x(3), x(STACK), #ofs});
+        } else {
+            load_x_from_label(&mut self.a, 0, &format!("_env_{}_", op));
+            self.emit(arm! {add x(1), x(STACK), #ofs});
+            self.emit(arm! {movz x(2), #num_args});
+            self.emit(arm! {add x(3), x(SP), #0});
+        }
 
         let label = format!("_func_{}_", op);
         load_long(&mut self.a, 9, &label);
@@ -85,10 +93,6 @@ impl Generator for ArmGenerator {
 
     fn count_shadows(&self) -> u8 {
         14
-    }
-
-    fn support_funclet(&self) -> FuncletType {
-        FuncletType::Complex
     }
 
     fn seal(&mut self) {
@@ -226,12 +230,12 @@ impl Generator for ArmGenerator {
             &locs[..],
             ultra,
             32,
-            |a, loc, dst| {
-                load_d_from_loc(a, 0, loc);
+            |a, src, dst| {
+                load_d_from_loc(a, 0, src);
                 save_d_to_loc(a, 0, dst);
             },
-            |a, arg, loc| {
-                load_d_from_loc(a, arg, loc);
+            |a, arg, src| {
+                load_d_from_loc(a, arg, src);
             },
         );
     }
@@ -246,8 +250,8 @@ impl Generator for ArmGenerator {
             |a, arg| {
                 emit(a, arm! {ldr d(arg), [x(STACK), x(8), lsl #3]});
             },
-            |a, arg, loc| {
-                save_d_to_loc(a, arg, loc);
+            |a, arg, dst| {
+                save_d_to_loc(a, arg, dst);
             },
         );
     }
@@ -259,12 +263,12 @@ impl Generator for ArmGenerator {
             &locs[..],
             ultra,
             32,
-            |a, loc, dst| {
-                load_c_from_loc(a, 0, loc);
+            |a, src, dst| {
+                load_c_from_loc(a, 0, src);
                 save_c_to_loc(a, 0, dst);
             },
-            |a, arg, loc| {
-                load_c_from_loc(a, arg, loc);
+            |a, arg, src| {
+                load_c_from_loc(a, arg, src);
             },
         );
     }
@@ -280,8 +284,8 @@ impl Generator for ArmGenerator {
                 emit(a, arm! {lsr x(8), x(8), #1});
                 emit(a, arm! {ldr q(arg), [x(STACK), x(8), lsl #4]});
             },
-            |a, arg, loc| {
-                save_c_to_loc(a, arg, loc);
+            |a, arg, dst| {
+                save_c_to_loc(a, arg, dst);
             },
         );
     }
@@ -515,10 +519,6 @@ impl Generator for ArmGenerator {
         self.load_stack(Reg::Ret, 0);
         self.load_stack(Reg::Temp, 1);
         Ok(())
-    }
-
-    fn call_funclet(&mut self, label: &str) {
-        self.jump(label, 0, |offset, _| arm! {bl label(offset)});
     }
 
     fn ret(&mut self) {
