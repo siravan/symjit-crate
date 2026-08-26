@@ -79,17 +79,14 @@ impl Statement {
                     let mut locs: Vec<Loc> = Vec::new();
                     rhs.caller(ir, &mut locs);
 
-                    let ultra = false;
-                    /*
-                    ir.config.opt_level() >= 3
-                    && locs.iter().all(|l| {
-                        if let Loc::Stack(idx) = l {
-                            *idx < 65536
-                        } else {
-                            false
-                        }
-                    });
-                    */
+                    let ultra = ir.config.opt_level() >= 3
+                        && locs.iter().all(|l| {
+                            if let Loc::Stack(idx) = l {
+                                *idx < 65536
+                            } else {
+                                false
+                            }
+                        });
 
                     if ultra {
                         ir.load_args(locs, true);
