@@ -371,6 +371,10 @@ impl Config {
         self.is_amd64() && !self.has_avx()
     }
 
+    pub fn is_window(&self) -> bool {
+        self.is_amd64() && cfg!(target_family = "windows")
+    }
+
     pub fn is_bytecode(&self) -> bool {
         matches!(self.ty, CompilerType::ByteCode)
     }
@@ -416,7 +420,7 @@ impl Config {
     }
 
     pub fn compress(&self) -> bool {
-        self.test(COMPRESS)
+        self.test(COMPRESS) && !self.is_window()
     }
 
     pub fn direct(&self) -> bool {
@@ -523,23 +527,24 @@ impl Config {
     }
 
     pub fn available_registers(&self) -> u8 {
-        16
-        /*
-        if (self.is_arm64() || self.is_riscv64()) && self.opt_level() == 3 {
+        if (self.is_arm64() || self.is_riscv64()) && self.opt_level() == 3 && !self.compress() {
             32
         } else {
             16
         }
-        */
     }
 
     pub fn count_scratch(&self) -> u8 {
         if !self.is_complex() {
             self.available_registers() - 2
-        } else if self.fast_complex() && !self.use_simd() && (self.is_arm64() || self.is_riscv64())
+        }
+        /*
+        else if self.fast_complex() && !self.use_simd() && (self.is_arm64() || self.is_riscv64())
         {
             self.available_registers() - 5
-        } else {
+        }
+        */
+        else {
             (self.available_registers() - 6) / 2
         }
     }

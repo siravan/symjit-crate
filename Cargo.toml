@@ -64,3 +64,7 @@ path = "src/profile.rs"
 [[bin]]
 name = "funcs"
 path = "src/funcs.rs"
+
+[[bin]]
+name = "simple"
+path = "src/simple.rs"
