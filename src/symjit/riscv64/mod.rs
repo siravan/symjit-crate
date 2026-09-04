@@ -2,11 +2,13 @@
 mod macros;
 
 use super::assembler::{Assembler, Jumper};
-use super::config::Config;
+use super::config::{Config, ABI_AREA};
 use super::generator::Generator;
 use super::symbol::Loc;
 use super::utils::{align_stack, Reg};
 use anyhow::Result;
+
+const REG_SIZE: u32 = 8;
 
 fn hi(x: u32) -> u32 {
     if x & 0x0800 != 0 {
@@ -22,6 +24,7 @@ fn lo(x: u32) -> u32 {
 
 pub struct RiscV {
     a: Assembler,
+    config: Config,
 }
 
 impl RiscV {
@@ -192,9 +195,10 @@ fn allocate_stack(a: &mut Assembler, size: u32, _with_arena: bool) {
 }
 
 impl RiscV {
-    pub fn new(_config: Config) -> RiscV {
+    pub fn new(config: Config) -> RiscV {
         RiscV {
             a: Assembler::new(),
+            config,
         }
     }
 
@@ -216,6 +220,31 @@ impl RiscV {
 
     fn emit(&mut self, w: u32) {
         self.a.append_word(w);
+    }
+
+    fn call_external(&mut self, op: &str, num_args: usize) -> Result<()> {
+        let ofs = ABI_AREA as u32 * REG_SIZE;
+
+        if self.config.is_kernel_func(op) {
+            self.emit(rvv! {addi x(Self::a0), x(SP), 0});
+            self.emit(rvv! {addi x(Self::a1), x(Self::zero), 0});
+            self.emit(rvv! {addi x(Self::a2), x(Self::zero), 0});
+            self.emit(rvv! {addi x(Self::a3), x(STACK), ofs});
+        } else {
+            self.load_x_from_label(Self::a0, &format!("_env_{}_", op));
+            self.emit(rvv! {addi x(Self::a1), x(STACK), ofs});
+            self.emit(rvv! {addi x(Self::a2), x(Self::zero), num_args});
+            self.emit(rvv! {addi x(Self::a3), x(SP), 0});
+        }
+
+        self.j_indirect(&format!("_func_{}_", op), Self::ra);
+
+        self.load_stack(Reg::Ret, 0);
+        if self.config.is_complex() {
+            self.load_stack(Reg::Temp, 1);
+        }
+
+        Ok(())
     }
 
     fn load_float(&mut self, d: u8, base: u8, offset: u32) {
@@ -298,6 +327,106 @@ impl RiscV {
             self.emit(rvv! {add x(Self::sp), x(Self::sp), x(Self::t0)});
         }
     }
+
+    fn load_d_from_loc(&mut self, r: u8, loc: Loc) {
+        match loc {
+            Loc::Param(idx) => self.load_float(r, PARAMS, 8 * idx),
+            Loc::Stack(idx) => self.load_float(r, STACK, 8 * idx),
+            Loc::Mem(idx) => self.load_float(r, MEM, 8 * idx),
+        }
+    }
+
+    fn save_d_to_loc(&mut self, r: u8, loc: Loc) {
+        match loc {
+            Loc::Param(idx) => self.save_float(r, PARAMS, 8 * idx),
+            Loc::Stack(idx) => self.save_float(r, STACK, 8 * idx),
+            Loc::Mem(idx) => self.save_float(r, MEM, 8 * idx),
+        }
+    }
+
+    fn load_c_from_loc(&mut self, r: u8, loc: Loc) {
+        let (base, idx) = match loc {
+            Loc::Param(idx) => (PARAMS, idx),
+            Loc::Stack(idx) => (STACK, idx),
+            Loc::Mem(idx) => (MEM, idx),
+        };
+
+        let offset = idx * 8;
+
+        if offset < 2040 {
+            self.emit(rvv! {fld f(r), x(base), offset});
+            self.emit(rvv! {fld f(r+1), x(base), offset + 8});
+        } else {
+            self.li(Self::t0, offset as i32);
+            self.emit(rvv! {add x(Self::t0), x(Self::t0), x(base)});
+            self.emit(rvv! {fld f(r), x(Self::t0), 0});
+            self.emit(rvv! {fld f(r+1), x(Self::t0), 8});
+        }
+    }
+
+    fn save_c_to_loc(&mut self, r: u8, loc: Loc) {
+        let (base, idx) = match loc {
+            Loc::Param(idx) => (PARAMS, idx),
+            Loc::Stack(idx) => (STACK, idx),
+            Loc::Mem(idx) => (MEM, idx),
+        };
+
+        let offset = idx * 8;
+
+        if offset < 2040 {
+            self.emit(rvv! {fsd f(r), x(base), offset});
+            self.emit(rvv! {fsd f(r+1), x(base), offset + 8});
+        } else {
+            self.li(Self::t0, offset as i32);
+            self.emit(rvv! {add x(Self::t0), x(Self::t0), x(base)});
+            self.emit(rvv! {fsd f(r), x(Self::t0), 0});
+            self.emit(rvv! {fsd f(r+1), x(Self::t0), 8});
+        }
+    }
+
+    fn load_x_from_label(&mut self, dst: u8, label: &str) {
+        self.jump(
+            label,
+            0,
+            |offset, _| rvv! {auipc x(Self::t0), hi(offset as u32)},
+        );
+
+        self.jump(
+            label,
+            dst as u32,
+            |offset, r| rvv! {ld x(r), x(Self::t0), lo((offset + 4) as u32)},
+        );
+    }
+
+    fn j(&mut self, label: &str, rd: u8) {
+        self.jump(
+            label,
+            0,
+            |offset, _| rvv! {auipc x(Self::t0), hi(offset as u32)},
+        );
+
+        self.jump(
+            label,
+            rd as u32,
+            |offset, rd| rvv! {jalr x(rd), x(Self::t0), lo((offset + 4) as u32)},
+        );
+    }
+
+    fn j_indirect(&mut self, label: &str, rd: u8) {
+        self.jump(
+            label,
+            0,
+            |offset, _| rvv! {auipc x(Self::t0), hi(offset as u32)},
+        );
+
+        self.jump(
+            label,
+            0,
+            |offset, _| rvv! {ld x(Self::t0), x(Self::t0), lo((offset + 4) as u32)},
+        );
+
+        self.emit(rvv! {jalr x(rd), x(Self::t0), 0});
+    }
 }
 
 impl Generator for RiscV {
@@ -324,19 +453,19 @@ impl Generator for RiscV {
     }
 
     fn branch(&mut self, label: &str) {
-        self.jump(label, 0, |offset, _| rvv! {j offset});
+        self.j(label, Self::zero);
     }
 
     fn branch_if(&mut self, cond: Reg, label: &str, is_else: bool) {
         self.emit(rvv! {fmv.x.d x(Self::t0), f(ϕ(cond))});
 
         if is_else {
-            self.emit(rvv! {beq x(Self::t0), x(Self::zero), 8});
+            self.emit(rvv! {beq x(Self::t0), x(Self::zero), 12});
         } else {
-            self.emit(rvv! {bne x(Self::t0), x(Self::zero), 8});
+            self.emit(rvv! {bne x(Self::t0), x(Self::zero), 12});
         }
 
-        self.jump(label, 0, |offset, _| rvv! {j offset});
+        self.j(label, Self::zero);
     }
 
     fn fuse_load_math(&mut self) {}
@@ -359,13 +488,13 @@ impl Generator for RiscV {
         self.jump(
             label.as_str(),
             0,
-            |offset, _| rvv! {auipc x(Self::a0), hi(offset as u32)},
+            |offset, _| rvv! {auipc x(Self::t0), hi(offset as u32)},
         );
 
         self.jump(
             label.as_str(),
             ϕ(dst) as u32,
-            |offset, r| rvv! {fld f(r), x(Self::a0), lo((offset + 4) as u32)},
+            |offset, r| rvv! {fld f(r), x(Self::t0), lo((offset + 4) as u32)},
         );
     }
 
@@ -433,20 +562,38 @@ impl Generator for RiscV {
         self.save_stack(Reg::Ret, idx);
     }
 
-    fn load_args(&mut self, _locs: Vec<Loc>, _ultra: bool) {
-        unimplemented!()
+    fn load_args(&mut self, locs: Vec<Loc>, _ultra: bool) {
+        for (arg, loc) in locs.iter().enumerate().skip(32) {
+            self.load_d_from_loc(0, *loc);
+            self.save_d_to_loc(0, self.config.location(arg as u8));
+        }
+
+        for (arg, loc) in locs.iter().enumerate().take(32) {
+            self.load_d_from_loc(arg as u8, *loc);
+        }
     }
 
-    fn save_args(&mut self, _num_args: u8, _ultra: bool) {
-        unimplemented!()
+    fn save_args(&mut self, num_args: u8, _ultra: bool) {
+        for arg in 0..num_args.min(32) {
+            self.save_d_to_loc(arg as u8, self.config.location(arg));
+        }
     }
 
-    fn load_args_complex(&mut self, _locs: Vec<Loc>, _ultra: bool) {
-        unimplemented!()
+    fn load_args_complex(&mut self, locs: Vec<Loc>, _ultra: bool) {
+        for (arg, loc) in locs.iter().enumerate().skip(16) {
+            self.load_c_from_loc(0, *loc);
+            self.save_c_to_loc(0, self.config.location(arg as u8));
+        }
+
+        for (arg, loc) in locs.iter().enumerate().take(16) {
+            self.load_c_from_loc(2 * arg as u8, *loc);
+        }
     }
 
-    fn save_args_complex(&mut self, _num_args: u8, _ultra: bool) {
-        unimplemented!()
+    fn save_args_complex(&mut self, num_args: u8, _ultra: bool) {
+        for arg in 0..num_args.min(16) {
+            self.save_c_to_loc(2 * arg, self.config.location(arg));
+        }
     }
 
     fn neg(&mut self, dst: Reg, s1: Reg) {
@@ -685,23 +832,12 @@ impl Generator for RiscV {
         self.append_quad(p.func_ptr());
     }
 
-    fn call(&mut self, op: &str, _num_args: usize) -> Result<()> {
-        let label = format!("_func_{}_", op);
+    fn call(&mut self, op: &str, num_args: usize) -> Result<()> {
+        if self.config.is_external_func(op) {
+            return self.call_external(op, num_args);
+        }
 
-        self.jump(
-            label.as_str(),
-            0,
-            |offset, _| rvv! {auipc x(Self::a1), hi(offset as u32)},
-        );
-
-        self.jump(
-            label.as_str(),
-            0,
-            |offset, _| rvv! {ld x(Self::a1), x(Self::a1), lo((offset + 4) as u32)},
-        );
-
-        self.emit(rvv! {jalr x(Self::ra), x(Self::a1), 0});
-
+        self.j_indirect(&format!("_func_{}_", op), Self::ra);
         Ok(())
     }
 
@@ -720,8 +856,8 @@ impl Generator for RiscV {
         Ok(())
     }
 
-    fn call_funclet(&mut self, _label: &str) {
-        todo!();
+    fn call_funclet(&mut self, label: &str) {
+        self.j(label, Self::ra);
     }
 
     fn ret(&mut self) {
@@ -843,6 +979,9 @@ impl Generator for RiscV {
         count_obs: usize,
         _count_params: usize,
     ) {
+        self.emit(rvv! {addi x(Self::a0), x(Self::zero), 0});
+        self.set_label("@epilogue");
+
         self.jump("@done", 0, |offset, _| {
             rvv! {beq x(STATES), x(Self::zero), offset}
         });
