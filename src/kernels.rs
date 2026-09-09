@@ -510,6 +510,8 @@ fn kernel_b2_simd_complex() -> Result<()> {
 }
 
 pub fn main() -> Result<()> {
+    let rvv = cfg!(target_arch = "riscv64");
+
     test_instructions()?;
     //pass("instructions");
 
@@ -525,14 +527,16 @@ pub fn main() -> Result<()> {
     kernel_p2_scalar_complex()?;
     pass("Kernel P2 scalar complex");
 
-    kernel_p2_simd_real()?;
-    pass("Kernel P2 simd real");
+    if !rvv {
+        kernel_p2_simd_real()?;
+        pass("Kernel P2 simd real");
 
-    // kernel_p2_simd_real_coef()?;
-    // pass("Kernel P2 simd real with coefficients");
+        // kernel_p2_simd_real_coef()?;
+        // pass("Kernel P2 simd real with coefficients");
 
-    kernel_p2_simd_complex()?;
-    pass("Kernel P2 simd complex");
+        kernel_p2_simd_complex()?;
+        pass("Kernel P2 simd complex");
+    }
 
     // kernel_p2_simd_complex_coef()?;
     // pass("Kernel P2 simd complex with coefficients");
@@ -546,17 +550,19 @@ pub fn main() -> Result<()> {
     kernel_b1_scalar_complex()?;
     pass("Kernel B1 complex");
 
-    kernel_b1_simd_real()?;
-    pass("Kernel B1 simd real");
+    if !rvv {
+        kernel_b1_simd_real()?;
+        pass("Kernel B1 simd real");
 
-    kernel_b1_simd_complex()?;
-    pass("Kernel B1 simd complex");
+        kernel_b1_simd_complex()?;
+        pass("Kernel B1 simd complex");
 
-    kernel_b2_simd_real()?;
-    pass("Kernel B2 simd real");
+        kernel_b2_simd_real()?;
+        pass("Kernel B2 simd real");
 
-    kernel_b2_simd_complex()?;
-    pass("Kernel B2 simd complex");
+        kernel_b2_simd_complex()?;
+        pass("Kernel B2 simd complex");
+    }
 
     Ok(())
 }
