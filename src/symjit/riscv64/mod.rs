@@ -3,7 +3,7 @@ mod macros;
 
 use super::assembler::{Assembler, Jumper};
 use super::config::{Config, ABI_AREA};
-use super::generator::Generator;
+use super::generator::{Generator, GeneratorType};
 use super::symbol::Loc;
 use super::utils::{align_stack, Reg};
 use anyhow::Result;
@@ -398,6 +398,7 @@ impl RiscV {
         );
     }
 
+    // jamp to label with the return address in rd
     fn j(&mut self, label: &str, rd: u8) {
         self.jump(
             label,
@@ -412,19 +413,9 @@ impl RiscV {
         );
     }
 
+    // jamp to the adresee stored in label with the return address in rd
     fn j_indirect(&mut self, label: &str, rd: u8) {
-        self.jump(
-            label,
-            0,
-            |offset, _| rvv! {auipc x(Self::t0), hi(offset as u32)},
-        );
-
-        self.jump(
-            label,
-            0,
-            |offset, _| rvv! {ld x(Self::t0), x(Self::t0), lo((offset + 4) as u32)},
-        );
-
+        self.load_x_from_label(Self::t0, label);
         self.emit(rvv! {jalr x(rd), x(Self::t0), 0});
     }
 }
@@ -440,6 +431,10 @@ impl Generator for RiscV {
 
     fn count_shadows(&self) -> u8 {
         14
+    }
+
+    fn what(&self) -> GeneratorType {
+        GeneratorType::RiscvScalar(self.config.is_complex())
     }
 
     fn seal(&mut self) {
@@ -575,7 +570,7 @@ impl Generator for RiscV {
 
     fn save_args(&mut self, num_args: u8, _ultra: bool) {
         for arg in 0..num_args.min(32) {
-            self.save_d_to_loc(arg as u8, self.config.location(arg));
+            self.save_d_to_loc(arg, self.config.location(arg));
         }
     }
 
