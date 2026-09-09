@@ -536,13 +536,13 @@ pub fn main() -> Result<()> {
 
         kernel_p2_simd_complex()?;
         pass("Kernel P2 simd complex");
+
+        // kernel_p2_simd_complex_coef()?;
+        // pass("Kernel P2 simd complex with coefficients");
+
+        kernel_p2_raw_duplicate_and_alias()?;
+        pass("Kernel P2 raw duplicate and alias");
     }
-
-    // kernel_p2_simd_complex_coef()?;
-    // pass("Kernel P2 simd complex with coefficients");
-
-    kernel_p2_raw_duplicate_and_alias()?;
-    pass("Kernel P2 raw duplicate and alias");
 
     kernel_b1_scalar_real()?;
     pass("Kernel B1 real");
