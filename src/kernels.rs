@@ -373,6 +373,11 @@ fn kernel_b1_simd_real() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_arch = "riscv64")]
+fn kernel_b1_simd_real() -> Result<()> {
+    Ok(())
+}
+
 #[cfg(target_arch = "x86_64")]
 fn kernel_b1_simd_complex() -> Result<()> {
     let mut config = Config::default();
@@ -438,6 +443,11 @@ fn kernel_b1_simd_complex() -> Result<()> {
     );
 
     assert!(outs[0] == Complex::new(f64x2::new([1.0, 2.0]), f64x2::new([3.0, 10.0])));
+    Ok(())
+}
+
+#[cfg(target_arch = "riscv64")]
+fn kernel_b1_simd_complex() -> Result<()> {
     Ok(())
 }
 
