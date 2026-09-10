@@ -187,6 +187,29 @@ fn test_external_evaluators() -> Result<()> {
     Ok(())
 }
 
+fn test_multiple() -> Result<()> {
+    let mut config = Config::default();
+    config.set_complex(false);
+
+    // Compile f(y) + f(x). The call order makes the incorrect result match the original report.
+    let mut translator = Translator::new(config);
+    translator.set_num_params(2);
+    translator.append_add(&Slot::Out(0), &[Slot::Param(0), Slot::Param(1)], 0)?;
+    translator.append_mul(&Slot::Out(1), &[Slot::Param(0), Slot::Out(0)], 0)?;
+
+    let app = translator.compile()?.seal()?;
+
+    let args = [5.0, 2.0];
+    let mut outs = vec![0.0; 2];
+
+    app.evaluate(&args, &mut outs);
+
+    assert_eq!(outs[0], args[0] + args[1]);
+    assert_eq!(outs[1], (args[0] + args[1]) * args[0]);
+
+    Ok(())
+}
+
 fn pass(what: &str) {
     println!("**** test {:?} passed. ****", what);
 }
@@ -219,6 +242,9 @@ pub fn main() -> Result<()> {
 
     test_external_evaluators()?;
     pass("external evaluator");
+
+    test_multiple()?;
+    pass("multiple");
 
     Ok(())
 }
