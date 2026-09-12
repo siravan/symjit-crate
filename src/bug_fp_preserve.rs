@@ -42,7 +42,6 @@ unsafe fn observe(
     (status as i32, actual)
 }
 
-#[test]
 fn public_kernels_preserve_fp_callee_saved_registers() -> Result<()> {
     let mut failures = Vec::new();
     // Compression is disabled: this isolates physical-register expansion from
@@ -124,4 +123,8 @@ fn public_kernels_preserve_fp_callee_saved_registers() -> Result<()> {
         failures.join("\n")
     );
     Ok(())
+}
+
+pub fn main() -> Result<()> {
+    public_kernels_preserve_fp_callee_saved_registers()
 }
