@@ -224,9 +224,9 @@ fn test_output_reuse() -> Result<()> {
     translator.append_assign(&Slot::Out(0), &Slot::Param(0))?;
     translator.append_assign(&Slot::Out(1), &Slot::Out(0))?;
 
-    let mut app = translator.compile()?;
+    let app = translator.compile()?;
 
-    app.dump("output_reuse.bytecode.txt", "bytecode");
+    // app.dump("output_reuse.bytecode.txt", "bytecode");
 
     let args = [5.0, 2.0];
     let mut outs = vec![0.0; 2];

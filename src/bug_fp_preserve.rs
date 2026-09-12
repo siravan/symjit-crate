@@ -47,10 +47,10 @@ fn public_kernels_preserve_fp_callee_saved_registers() -> Result<()> {
     let mut failures = Vec::new();
     // Compression is disabled: this isolates physical-register expansion from
     // the independent compressed-subroutine normal-exit issue.
-    for compress in [false] {
-        for opt in [3] {
+    for compress in [false, true] {
+        for opt in [0, 1, 2, 3] {
             for (complex, fast) in [(true, false)] {
-                for arity in [16] {
+                for arity in 4..=16 {
                     let mut config = Config::default();
                     config.set_symbolica(true);
                     config.set_compress(compress);
