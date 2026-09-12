@@ -68,3 +68,7 @@ path = "src/funcs.rs"
 [[bin]]
 name = "simple"
 path = "src/simple.rs"
+
+[[bin]]
+name = "bug"
+path = "src/bug_fp_preserve.rs"

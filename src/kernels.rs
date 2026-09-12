@@ -179,6 +179,40 @@ fn kernel_p2_simd_complex() -> Result<()> {
     Ok(())
 }
 
+fn kernel_p2_simd_complex_trailing_inputs() -> Result<()> {
+    let mut config = Config::default();
+    config.set_complex(true);
+    config.set_direct_arena(true);
+    let mut compiler = Compiler::with_config(config);
+    let app = compiler.translate(MODEL.into(), 3)?.seal()?;
+
+    let mut x = Complex::new([1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0]);
+    let mut y = Complex::new([1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0]);
+    let mut u = Complex::new([0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]);
+    let mut z = Complex::new([0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]);
+
+    let states: Vec<&mut [f64]> = vec![
+        &mut x.re[..],
+        &mut x.im[..],
+        &mut y.re[..],
+        &mut y.im[..],
+        &mut u.re[..],
+        &mut u.im[..],
+        &mut z.re[..],
+        &mut z.im[..],
+    ];
+    let params: Vec<f64> = Vec::new();
+
+    let f = app.simd_kernel().unwrap();
+    let _ = f(std::ptr::null(), states.as_ptr(), 0, params.as_ptr());
+
+    #[cfg(target_arch = "aarch64")]
+    let _ = f(std::ptr::null(), states.as_ptr(), 2, params.as_ptr());
+
+    assert!(z.re[3] == 4.0 && z.im[3] == 36.0);
+    Ok(())
+}
+
 fn kernel_p2_simd_complex_coef() -> Result<()> {
     let mut config = Config::default();
     config.set_complex(true);
@@ -288,6 +322,20 @@ fn kernel_b1_scalar_real() -> Result<()> {
     let app = compiler.translate(MODEL.into(), 0)?.seal()?;
 
     let args = [3.0, 5.0];
+    let mut outs = [0.0];
+
+    let f = app.scalar_kernel().unwrap();
+    let _ = f(outs.as_mut_ptr(), std::ptr::null(), 0, args.as_ptr());
+    assert!(outs[0] == 14.0);
+
+    Ok(())
+}
+
+fn kernel_b1_scalar_real_trailing_inputs() -> Result<()> {
+    let mut compiler = Compiler::new();
+    let app = compiler.translate(MODEL.into(), 4)?.seal()?;
+
+    let args = [3.0, 5.0, -2.0, 3.0];
     let mut outs = [0.0];
 
     let f = app.scalar_kernel().unwrap();
@@ -537,6 +585,9 @@ pub fn main() -> Result<()> {
         kernel_p2_simd_complex()?;
         pass("Kernel P2 simd complex");
 
+        kernel_p2_simd_complex_trailing_inputs()?;
+        pass("Kernel P2 simd complex trailing inputs");
+
         // kernel_p2_simd_complex_coef()?;
         // pass("Kernel P2 simd complex with coefficients");
 
@@ -546,6 +597,9 @@ pub fn main() -> Result<()> {
 
     kernel_b1_scalar_real()?;
     pass("Kernel B1 real");
+
+    kernel_b1_scalar_real_trailing_inputs()?;
+    pass("Kernel B1 real trailing inputs");
 
     kernel_b1_scalar_complex()?;
     pass("Kernel B1 complex");
