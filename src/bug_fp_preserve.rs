@@ -1,5 +1,4 @@
 //! AAPCS64 requires every public kernel to preserve the low 64 bits of v8-v15.
-#![cfg(target_arch = "aarch64")]
 use anyhow::Result;
 use std::arch::asm;
 use symjit::{Compiled, CompiledPlaneFunc, Composer, Config, PlaneDescriptor, Slot, Translator};
@@ -16,6 +15,7 @@ const SENTINELS: [u64; 8] = [
 ];
 
 #[inline(never)]
+#[cfg(target_arch = "aarch64")]
 unsafe fn observe(
     function: CompiledPlaneFunc<f64>,
     planes: *const PlaneDescriptor<f64>,
@@ -42,6 +42,7 @@ unsafe fn observe(
     (status as i32, actual)
 }
 
+#[cfg(target_arch = "aarch64")]
 fn public_kernels_preserve_fp_callee_saved_registers() -> Result<()> {
     let mut failures = Vec::new();
     // Compression is disabled: this isolates physical-register expansion from
@@ -122,6 +123,11 @@ fn public_kernels_preserve_fp_callee_saved_registers() -> Result<()> {
         "callee-saved corruption:\n{}",
         failures.join("\n")
     );
+    Ok(())
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn public_kernels_preserve_fp_callee_saved_registers() -> Result<()> {
     Ok(())
 }
 
