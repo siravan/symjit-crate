@@ -24,6 +24,7 @@ pub trait Composer {
     fn append_goto(&mut self, id: usize) -> Result<()>;
     fn append_external_fun(&mut self, lhs: &Slot, op: &str, args: &[Slot]) -> Result<()>;
     fn append_fun(&mut self, lhs: &Slot, fun: &str, args: &[Slot], is_real: bool) -> Result<()>;
+    #[allow(unused)]
     fn append_fun_v1(
         &mut self,
         lhs: &Slot,
@@ -111,6 +112,9 @@ impl DirectTranslator {
                 let name = format!("Param{}", idx);
                 if let Some(Loc::Param(i)) = self.find_sym(&name) {
                     self.mir.load_param(dst, i);
+                    if self.reals.contains(&Loc::Param(i)) {
+                        self.mir.real(dst, dst);
+                    }
                 } else {
                     return Err(anyhow!("error adding {:?}.", name));
                 }
@@ -207,6 +211,7 @@ impl DirectTranslator {
             "neg" => self.mir.neg(dst, r),
             "not" => self.mir.not(dst, r),
             "abs" => self.mir.abs(dst, r),
+            "abs2" => self.mir.abs2(dst, r),
             "root" => self.mir.root(dst, r),
             "real_root" => self.mir.real_root(dst, r),
             "square" => self.mir.square(dst, r),
@@ -316,12 +321,12 @@ impl Composer for DirectTranslator {
     }
 
     fn append_add(&mut self, lhs: &Slot, args: &[Slot], num_reals: usize) -> Result<()> {
-        self.load(reg(0), &args[0])?;
         self.mark_real(&args[0], 0 < num_reals);
+        self.load(reg(0), &args[0])?;
 
         for (i, arg) in args.iter().enumerate().skip(1) {
-            self.load(reg(1), arg)?;
             self.mark_real(arg, i < num_reals);
+            self.load(reg(1), arg)?;
             self.mir.plus(reg(0), reg(0), reg(1));
         }
         self.save(reg(0), lhs)?;
@@ -330,8 +335,8 @@ impl Composer for DirectTranslator {
     }
 
     fn append_mul(&mut self, lhs: &Slot, args: &[Slot], num_reals: usize) -> Result<()> {
-        self.load(reg(0), &args[0])?;
         self.mark_real(&args[0], 0 < num_reals);
+        self.load(reg(0), &args[0])?;
 
         let mut negate = false;
 
@@ -339,8 +344,8 @@ impl Composer for DirectTranslator {
             if self.is_minus_one(arg) {
                 negate = !negate;
             } else {
-                self.load(reg(1), arg)?;
                 self.mark_real(arg, i < num_reals);
+                self.load(reg(1), arg)?;
                 self.mir.times(reg(0), reg(0), reg(1));
             }
         }
@@ -355,21 +360,13 @@ impl Composer for DirectTranslator {
     }
 
     fn append_pow(&mut self, lhs: &Slot, arg: &Slot, p: i64, is_real: bool) -> Result<()> {
-        self.load(reg(0), arg)?;
         self.mark_real(arg, is_real);
+        self.load(reg(0), arg)?;
 
         match p {
             2 => self.mir.square(reg(1), reg(0)),
             3 => self.mir.cube(reg(1), reg(0)),
             -1 => self.mir.recip(reg(1), reg(0)),
-            -2 => {
-                self.mir.recip(reg(1), reg(0));
-                self.mir.square(reg(1), reg(0))
-            }
-            -3 => {
-                self.mir.recip(reg(1), reg(0));
-                self.mir.cube(reg(1), reg(0))
-            }
             p => self.mir.powi(reg(1), reg(0), p as i32),
         }
         self.save(reg(1), lhs)?;
@@ -385,6 +382,7 @@ impl Composer for DirectTranslator {
         self.mir.setup_call_binary(reg(0), reg(1));
         self.mir.call("power", 2)?;
         self.save(Reg::Ret, lhs)?;
+        self.ft.insert("power".to_string());
         Ok(())
     }
 

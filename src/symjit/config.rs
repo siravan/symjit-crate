@@ -550,7 +550,9 @@ impl Config {
     }
 
     pub fn is_external_func(&self, op: &str) -> bool {
-        if let Some(df) = &self.df {
+        if op == "@self" {
+            true
+        } else if let Some(df) = &self.df {
             matches!(df.funcs.get(op), Some(Func::Slice { .. }))
                 || matches!(df.funcs.get(op), Some(Func::App { .. }))
         } else {
@@ -559,7 +561,9 @@ impl Config {
     }
 
     pub fn is_kernel_func(&self, op: &str) -> bool {
-        if let Some(df) = &self.df {
+        if op == "@self" {
+            true
+        } else if let Some(df) = &self.df {
             matches!(df.funcs.get(op), Some(Func::App { .. }))
         } else {
             false
@@ -922,6 +926,7 @@ impl Default for Config {
 // machine code
 const UNARY: &[&str] = &[
     "abs",
+    "abs2",
     "not",
     "neg",
     "root",

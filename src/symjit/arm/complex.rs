@@ -58,7 +58,7 @@ impl ArmComplexGenerator {
         let ofs = ABI_AREA as u32 * REG_SIZE;
 
         if self.config.is_kernel_func(op) {
-            self.emit(arm! {add x(0), x(SP), #0});
+            self.emit(arm! {add x(0), x(STACK), #0});
             self.emit(arm! {eor x(1), x(1), x(1)});
             self.emit(arm! {eor x(2), x(2), x(2)});
             self.emit(arm! {add x(3), x(STACK), #ofs});
@@ -66,16 +66,30 @@ impl ArmComplexGenerator {
             load_x_from_label(&mut self.a, 0, &format!("_env_{}_", op));
             self.emit(arm! {add x(1), x(STACK), #ofs});
             self.emit(arm! {movz x(2), #num_args});
-            self.emit(arm! {add x(3), x(SP), #0});
+            self.emit(arm! {add x(3), x(STACK), #0});
         }
 
-        let label = format!("_func_{}_", op);
-        load_long(&mut self.a, 9, &label);
-        self.emit(arm! {blr x(9)});
+        if op == "@self" {
+            self.call_funclet("@self");
+        } else {
+            let label = format!("_func_{}_", op);
+            load_long(&mut self.a, 9, &label);
+            self.emit(arm! {blr x(9)});
+        }
 
         self.load_stack(Reg::Ret, 0);
 
         Ok(())
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn supports_fcma(&self) -> bool {
+        std::arch::is_aarch64_feature_detected!("fcma")
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    fn supports_fcma(&self) -> bool {
+        false
     }
 }
 
@@ -178,19 +192,11 @@ impl Generator for ArmComplexGenerator {
     }
 
     fn load_stack(&mut self, dst: Reg, idx: u32) {
-        if idx < 16 {
-            load_q_from_mem(&mut self.a, ϕ(dst), SP, idx / 2);
-        } else {
-            load_q_from_mem(&mut self.a, ϕ(dst), STACK, idx / 2);
-        }
+        load_q_from_mem(&mut self.a, ϕ(dst), STACK, idx / 2);
     }
 
     fn save_stack(&mut self, dst: Reg, idx: u32) {
-        if idx < 16 {
-            save_q_to_mem(&mut self.a, ϕ(dst), SP, idx / 2);
-        } else {
-            save_q_to_mem(&mut self.a, ϕ(dst), STACK, idx / 2);
-        }
+        save_q_to_mem(&mut self.a, ϕ(dst), STACK, idx / 2);
     }
 
     fn load_mem_complex(&mut self, _xd: Reg, _yd: Reg, _idx: u32) {}
@@ -253,6 +259,12 @@ impl Generator for ArmComplexGenerator {
         self.emit(arm! {fneg q(ϕ(dst)), q(ϕ(s1))});
     }
 
+    fn sign(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fmov q(ϕ(Reg::Temp)), #0.0});
+        self.emit(arm! {fneg q(ϕ(Reg::Temp)), q(ϕ(Reg::Temp))});
+        self.and(dst, s1, Reg::Temp);
+    }
+
     fn abs(&mut self, dst: Reg, s1: Reg) {
         self.emit(arm! {fmul q(T2), q(ϕ(s1)), q(ϕ(s1))});
         self.emit(arm! {eor v(ϕ(dst)).16b, v(ϕ(dst)).16b, v(ϕ(dst)).16b});
@@ -260,31 +272,53 @@ impl Generator for ArmComplexGenerator {
         self.emit(arm! {fsqrt d(ϕ(dst)), d(ϕ(dst))});
     }
 
+    fn abs2(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fmul q(T2), q(ϕ(s1)), q(ϕ(s1))});
+        self.emit(arm! {eor v(ϕ(dst)).16b, v(ϕ(dst)).16b, v(ϕ(dst)).16b});
+        self.emit(arm! {faddp d(ϕ(dst)), q(T2)});
+    }
+
     fn root(&mut self, dst: Reg, s1: Reg) {
-        self.emit(arm! {fmov x(0), d(ϕ(s1))});
+        self.fmov(Reg::Temp, s1);
+        self.call_funclet("@complex_root");
+        self.fmov(dst, Reg::Ret);
 
-        self.emit(arm! {fmul q(T1), q(ϕ(s1)), q(ϕ(s1))});
-        self.emit(arm! {faddp d(T1), q(T1)});
-        self.emit(arm! {fsqrt d(T1), d(T1)});
-        self.emit(arm! {fabs d(T2), d(ϕ(s1))});
-        self.emit(arm! {fadd d(T1), d(T1), d(T2)});
-        self.emit(arm! {fmov d(T0), #0.5});
-        self.emit(arm! {fmul d(T1), d(T1), d(T0)});
-        self.emit(arm! {fsqrt d(T1), d(T1)});
+        if !self.a.has_label("@complex_root") {
+            self.branch("@jump_over_complex_root");
 
-        self.emit(arm! {zip2 q(T2), q(ϕ(s1)), q(ϕ(s1))});
-        self.emit(arm! {fdiv d(T2), d(T2), d(T1)});
-        self.emit(arm! {fmul d(T2), d(T2), d(T0)});
+            self.set_label("@complex_root");
 
-        self.emit(arm! {fcmeq d(T0), d(T2), d(T2)});
-        self.emit(arm! {and v(T2).8b, v(T2).8b, v(T0).8b});
+            let s1 = ϕ(Reg::Temp);
+            let dst = ϕ(Reg::Ret);
 
-        self.emit(arm! {zip1 q(ϕ(dst)), q(T2), q(T1)});
-        let label = self.a.create_label();
-        self.emit(arm! {tst x(0), x(0)});
-        self.jump(&label, 0, |offset, _| arm! {b.mi label(offset)});
-        self.emit(arm! {zip1 q(ϕ(dst)), q(T1), q(T2)});
-        self.set_label(&label);
+            self.emit(arm! {fmul q(T1), q(s1), q(s1)});
+            self.emit(arm! {faddp d(T1), q(T1)});
+            self.emit(arm! {fsqrt d(T1), d(T1)});
+            self.emit(arm! {fabs d(T2), d(s1)});
+            self.emit(arm! {fadd d(T1), d(T1), d(T2)});
+            self.emit(arm! {fmov d(T0), #0.5});
+            self.emit(arm! {fmul d(T1), d(T1), d(T0)});
+            self.emit(arm! {fsqrt d(T1), d(T1)});
+
+            self.emit(arm! {zip2 q(T2), q(s1), q(s1)});
+            self.emit(arm! {fdiv d(T2), d(T2), d(T1)});
+            self.emit(arm! {fmul d(T2), d(T2), d(T0)});
+
+            self.emit(arm! {fcmeq d(T0), d(T2), d(T2)});
+            self.emit(arm! {and v(T2).8b, v(T2).8b, v(T0).8b});
+
+            self.emit(arm! {fcmp d(s1), #0.0});
+            self.emit(arm! {fcsel d(T0), d(T1), d(T2), ge});
+            self.emit(arm! {fcsel d(T2), d(T1), d(T2), lt});
+            self.emit(arm! {fabs d(T1), d(T0)});
+            self.emit(arm! {eor v(T0).8b, v(T0).8b, v(T1).8b});
+            self.emit(arm! {eor v(T2).8b, v(T0).8b, v(T2).8b});
+
+            self.emit(arm! {zip1 q(dst), q(T1), q(T2)});
+            self.ret();
+
+            self.set_label("@jump_over_complex_root");
+        }
     }
 
     fn real_root(&mut self, dst: Reg, s1: Reg) {
@@ -339,48 +373,54 @@ impl Generator for ArmComplexGenerator {
     }
 
     fn times(&mut self, dst: Reg, s1: Reg, s2: Reg) {
-        /*
-        self.emit(arm! {eor v(T1).16b, v(T1).16b, v(T1).16b});
-        self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #0});
-        self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #90});
-        self.emit(arm! {fmov q(ϕ(dst)), q(T1)});
-        */
+        if self.config.compress() && self.supports_fcma() {
+            if dst != s1 && dst != s2 {
+                self.emit(arm! {fmov q(ϕ(dst)), #0.0});
+                self.emit(arm! {fcmla q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2)), #0});
+                self.emit(arm! {fcmla q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2)), #90});
+            } else {
+                self.emit(arm! {fmov q(T1), #0.0});
+                self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #0});
+                self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #90});
+                self.emit(arm! {fmov q(ϕ(dst)), q(T1)});
+            }
+        } else {
+            self.emit(arm! { fmul d(T0), d(ϕ(s1)), d(ϕ(s2)) }); // T0 = x1*x2
+            self.emit(arm! { dup q(T1), q(ϕ(s1))[1] }); // T1 = y1
+            self.emit(arm! { dup q(T2), q(ϕ(s2))[1] }); // T2 = y2
+            self.emit(arm! { fmsub d(T0), d(T1), d(T2), d(T0) }); // T0 = x1*x2 - y1*y2
+            self.emit(arm! { fmul d(T2), d(ϕ(s1)), d(T2) }); // T2 = x1*y2
+            self.emit(arm! { fmadd d(T2), d(ϕ(s2)), d(T1), d(T2) }); // T2 = x1*y2 + x2*y1
 
-        self.emit(arm! { fmul d(T0), d(ϕ(s1)), d(ϕ(s2)) }); // T0 = x1*x2
-        self.emit(arm! { dup q(T1), q(ϕ(s1))[1] }); // T1 = y1
-        self.emit(arm! { dup q(T2), q(ϕ(s2))[1] }); // T2 = y2
-        self.emit(arm! { fmsub d(T0), d(T1), d(T2), d(T0) }); // T0 = x1*x2 - y1*y2
-        self.emit(arm! { fmul d(T2), d(ϕ(s1)), d(T2) }); // T2 = x1*y2
-        self.emit(arm! { fmadd d(T2), d(ϕ(s2)), d(T1), d(T2) }); // T2 = x1*y2 + x2*y1
-
-        self.emit(arm! { zip1 q(ϕ(dst)), q(T0), q(T2) }); // dst = (x1*x2 - y1*y2) + (x1*y2 + x2*y1)*im
+            self.emit(arm! { zip1 q(ϕ(dst)), q(T0), q(T2) }); // dst = (x1*x2 - y1*y2) + (x1*y2 + x2*y1)*im
+        }
     }
 
     fn divide(&mut self, dst: Reg, s1: Reg, s2: Reg) {
-        /*
-        self.emit(arm! {eor v(T1).16b, v(T1).16b, v(T1).16b});
-        self.emit(arm! {fcmla q(T1), q(ϕ(s2)), q(ϕ(s1)), #0});
-        self.emit(arm! {fcmla q(T1), q(ϕ(s2)), q(ϕ(s1)), #270});
+        if self.config.compress() && self.supports_fcma() {
+            self.emit(arm! {eor v(T1).16b, v(T1).16b, v(T1).16b});
+            self.emit(arm! {fcmla q(T1), q(ϕ(s2)), q(ϕ(s1)), #0});
+            self.emit(arm! {fcmla q(T1), q(ϕ(s2)), q(ϕ(s1)), #270});
 
-        self.emit(arm! {fmul q(T2), q(ϕ(s2)), q(ϕ(s2))});
-        self.emit(arm! {faddp d(T2), q(T2)});
-        self.emit(arm! {dup q(T2), q(T2)[0]});
-        self.emit(arm! {fdiv q(ϕ(dst)), q(T1), q(T2)});
-        */
+            self.emit(arm! {fmul q(T2), q(ϕ(s2)), q(ϕ(s2))});
+            self.emit(arm! {faddp d(T2), q(T2)});
+            self.emit(arm! {dup q(T2), q(T2)[0]});
+            self.emit(arm! {fdiv q(ϕ(dst)), q(T1), q(T2)});
+        } else {
+            self.emit(arm! { fmul d(T0), d(ϕ(s1)), d(ϕ(s2)) }); // T0 = x1*x2
+            self.emit(arm! { dup q(T1), q(ϕ(s1))[1] }); // T1 = y1
+            self.emit(arm! { dup q(T2), q(ϕ(s2))[1] }); // T2 = y2
+            self.emit(arm! { fmadd d(T0), d(T1), d(T2), d(T0) }); // T0 = x1*x2 + y1*y2
+            self.emit(arm! { fmul d(T1), d(ϕ(s2)), d(T1) }); // T1 = x2*y1
+            self.emit(arm! { fmsub d(T1), d(ϕ(s1)), d(T2), d(T1) }); // T1 = x2*y1 - x1*y2
 
-        self.emit(arm! { fmul d(T0), d(ϕ(s1)), d(ϕ(s2)) }); // T0 = x1*x2
-        self.emit(arm! { dup q(T1), q(ϕ(s1))[1] }); // T1 = y1
-        self.emit(arm! { dup q(T2), q(ϕ(s2))[1] }); // T2 = y2
-        self.emit(arm! { fmadd d(T0), d(T1), d(T2), d(T0) }); // T0 = x1*x2 + y1*y2
-        self.emit(arm! { fmul d(T1), d(ϕ(s2)), d(T1) }); // T1 = x2*y1
-        self.emit(arm! { fmsub d(T1), d(ϕ(s1)), d(T2), d(T1) }); // T1 = x2*y1 - x1*y2
+            self.emit(arm! { zip1 q(T0), q(T0), q(T1) }); // T0 = (x1*x2 + y1*y2) + (x2*y1 - x1*y2)*im
 
-        self.emit(arm! { zip1 q(T0), q(T0), q(T1) }); // T0 = (x1*x2 + y1*y2) + (x2*y1 - x1*y2)*im
-
-        self.emit(arm! { fmul d(T1), d(ϕ(s2)), d(ϕ(s2)) }); // T1 = x2*x2
-        self.emit(arm! { fmadd d(T1), d(T2), d(T2), d(T1) }); // T1 = x2*x2 + y2*y2
-        self.emit(arm! { dup q(T1), q(T1)[0] });
-        self.emit(arm! { fdiv q(ϕ(dst)), q(T0), q(T1) }); // T0 = (x1*x2 + y1*y2)/T1 + (x2*y1 - x1*y2)/T1*im
+            self.emit(arm! { fmul d(T1), d(ϕ(s2)), d(ϕ(s2)) }); // T1 = x2*x2
+            self.emit(arm! { fmadd d(T1), d(T2), d(T2), d(T1) }); // T1 = x2*x2 + y2*y2
+            self.emit(arm! { dup q(T1), q(T1)[0] });
+            self.emit(arm! { fdiv q(ϕ(dst)), q(T0), q(T1) }); // T0 = (x1*x2 + y1*y2)/T1 + (x2*y1 - x1*y2)/T1*im
+        }
     }
 
     fn times_complex(
@@ -456,14 +496,16 @@ impl Generator for ArmComplexGenerator {
     }
 
     fn eq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
-        self.emit(arm! {fcmeq d(ϕ(dst)), d(ϕ(s1)), d(ϕ(s2))});
-        self.emit(arm! {dup q(ϕ(dst)), q(ϕ(dst))[0]});
+        self.emit(arm! {fcmeq q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+        self.emit(arm! {ext q(T1), q(ϕ(dst)), q(ϕ(dst)), #8}); // flipping lanes
+        self.emit(arm! {and v(ϕ(dst)).16b, v(ϕ(dst)).16b, v(T1).16b});
     }
 
     fn neq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
-        self.emit(arm! {fcmeq d(ϕ(dst)), d(ϕ(s1)), d(ϕ(s2))});
-        self.emit(arm! {not v(ϕ(dst)).8b, v(ϕ(dst)).8b});
-        self.emit(arm! {dup q(ϕ(dst)), q(ϕ(dst))[0]});
+        self.emit(arm! {fcmeq q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
+        self.emit(arm! {not v(ϕ(dst)).16b, v(ϕ(dst)).16b});
+        self.emit(arm! {ext q(T1), q(ϕ(dst)), q(ϕ(dst)), #8});
+        self.emit(arm! {and v(ϕ(dst)).16b, v(ϕ(dst)).16b, v(T1).16b});
     }
 
     fn and(&mut self, dst: Reg, s1: Reg, s2: Reg) {
@@ -490,76 +532,84 @@ impl Generator for ArmComplexGenerator {
         self.emit(arm! {not v(ϕ(dst)).16b, v(ϕ(s1)).16b});
     }
 
-    #[cfg(target_arch = "aarch64")]
     fn fused_mul_add(&mut self, dst: Reg, s1: Reg, s2: Reg, s3: Reg) {
-        if std::arch::is_aarch64_feature_detected!("fcma") {
-            self.emit(arm! {fmov q(T1), q(ϕ(s3))});
-            self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #0});
-            self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #90});
-            self.emit(arm! {fmov q(ϕ(dst)), q(T1)});
-        } else {
+        if self.supports_fcma() {
+            if dst == s3 && dst != s1 && dst != s2 {
+                self.emit(arm! {fcmla q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2)), #0});
+                self.emit(arm! {fcmla q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2)), #90});
+            } else {
+                self.emit(arm! {fmov q(T1), q(ϕ(s3))});
+                self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #0});
+                self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #90});
+                self.emit(arm! {fmov q(ϕ(dst)), q(T1)});
+            }
+        } else if s3 != Reg::Temp {
             self.times(Reg::Temp, s1, s2);
             self.plus(dst, Reg::Temp, s3);
+        } else {
+            self.times(Reg::Ret, s1, s2);
+            self.plus(dst, Reg::Ret, s3);
         }
     }
-
-    #[cfg(not(target_arch = "aarch64"))]
-    fn fused_mul_add(&mut self, _dst: Reg, _s1: Reg, _s2: Reg, _s3: Reg) {}
 
     // fused_mul_sub is s1 * s2 - s3, corresponding to fnmsub in aarch64
     // and vmsub... in amd64
-    #[cfg(target_arch = "aarch64")]
     fn fused_mul_sub(&mut self, dst: Reg, s1: Reg, s2: Reg, s3: Reg) {
-        if std::arch::is_aarch64_feature_detected!("fcma") {
-            self.emit(arm! {fneg q(T1), q(ϕ(s3))});
-            self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #0});
-            self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #90});
-            self.emit(arm! {fmov q(ϕ(dst)), q(T1)});
-        } else {
+        if self.supports_fcma() {
+            if dst == s3 && dst != s1 && dst != s2 {
+                self.emit(arm! {fneg q(ϕ(dst)), q(ϕ(s3))});
+                self.emit(arm! {fcmla q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2)), #0});
+                self.emit(arm! {fcmla q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2)), #90});
+            } else {
+                self.emit(arm! {fneg q(T1), q(ϕ(s3))});
+                self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #0});
+                self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #90});
+                self.emit(arm! {fmov q(ϕ(dst)), q(T1)});
+            }
+        } else if s3 != Reg::Temp {
             self.times(Reg::Temp, s1, s2);
             self.minus(dst, Reg::Temp, s3);
+        } else {
+            self.times(Reg::Ret, s1, s2);
+            self.minus(dst, Reg::Ret, s3);
         }
     }
 
-    #[cfg(not(target_arch = "aarch64"))]
-    fn fused_mul_sub(&mut self, _dst: Reg, _s1: Reg, _s2: Reg, _s3: Reg) {}
-
     // fused_neg_mul_add is s3 - s1 * s2, corresponding to fmsub in aarch64
     // and vnmadd... in amd64
-    #[cfg(target_arch = "aarch64")]
     fn fused_neg_mul_add(&mut self, dst: Reg, s1: Reg, s2: Reg, s3: Reg) {
-        if std::arch::is_aarch64_feature_detected!("fcma") {
+        if self.supports_fcma() {
             self.emit(arm! {fneg q(T1), q(ϕ(s3))});
             self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #0});
             self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #90});
             self.emit(arm! {fneg q(ϕ(dst)), q(T1)});
-        } else {
+        } else if s3 != Reg::Temp {
             self.times(Reg::Temp, s1, s2);
             self.minus(dst, s3, Reg::Temp);
+        } else {
+            self.times(Reg::Ret, s1, s2);
+            self.minus(dst, Reg::Ret, s3);
         }
     }
 
-    #[cfg(not(target_arch = "aarch64"))]
-    fn fused_neg_mul_add(&mut self, _dst: Reg, _s1: Reg, _s2: Reg, _s3: Reg) {}
-
     // fused_neg_mul_sub is -s3 - s1 * s2, corresponding to fnmadd in aarch64
     // and vnmsub... in amd64
-    #[cfg(target_arch = "aarch64")]
     fn fused_neg_mul_sub(&mut self, dst: Reg, s1: Reg, s2: Reg, s3: Reg) {
-        if std::arch::is_aarch64_feature_detected!("fcma") {
+        if self.supports_fcma() {
             self.emit(arm! {fmov q(T1), q(ϕ(s3))});
             self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #0});
             self.emit(arm! {fcmla q(T1), q(ϕ(s1)), q(ϕ(s2)), #90});
             self.emit(arm! {fneg q(ϕ(dst)), q(T1)});
-        } else {
+        } else if s3 != Reg::Temp {
             self.times(Reg::Temp, s1, s2);
             self.plus(dst, Reg::Temp, s3);
             self.neg(dst, dst);
+        } else {
+            self.times(Reg::Ret, s1, s2);
+            self.plus(dst, Reg::Ret, s3);
+            self.neg(dst, dst);
         }
     }
-
-    #[cfg(not(target_arch = "aarch64"))]
-    fn fused_neg_mul_sub(&mut self, _dst: Reg, _s1: Reg, _s2: Reg, _s3: Reg) {}
 
     fn add_consts(&mut self, consts: &[f64]) {
         self.align();
@@ -583,7 +633,7 @@ impl Generator for ArmComplexGenerator {
     }
 
     fn call_complex(&mut self, op: &str, num_args: usize) -> Result<()> {
-        self.emit(arm! {add x(0), x(SP), #0});
+        self.emit(arm! {add x(0), x(STACK), #0});
 
         if num_args == 2 {
             self.save_stack(Reg::Right, 0);
@@ -598,7 +648,7 @@ impl Generator for ArmComplexGenerator {
     }
 
     fn call_funclet(&mut self, label: &str) {
-        self.jump(label, 0, |offset, _| arm! {bl label(offset)});
+        call_funclet(&mut self.a, label);
     }
 
     fn ret(&mut self) {
@@ -718,7 +768,7 @@ impl Generator for ArmComplexGenerator {
             let phys_reg = ϕ(*r);
             if (8..=15).contains(&phys_reg) {
                 // self.save_stack(*r, phys_reg as u32);
-                save_d_to_mem(&mut self.a, phys_reg, SP, phys_reg as u32);
+                save_d_to_mem(&mut self.a, phys_reg, STACK, phys_reg as u32);
             }
         }
     }
@@ -732,7 +782,7 @@ impl Generator for ArmComplexGenerator {
             let phys_reg = ϕ(*r);
             if (8..=15).contains(&phys_reg) {
                 // self.load_stack(*r, phys_reg as u32);
-                load_d_from_mem(&mut self.a, phys_reg, SP, phys_reg as u32);
+                load_d_from_mem(&mut self.a, phys_reg, STACK, phys_reg as u32);
             }
         }
     }

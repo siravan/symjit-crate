@@ -83,6 +83,8 @@ const UNIOP_CONJUGATE: u8 = UniOp::Conjugate as u8;
 const UNIOP_HALF: u8 = UniOp::Half as u8;
 const UNIOP_ISZERO: u8 = UniOp::IsZero as u8;
 const UNIOP_ISNOTZERO: u8 = UniOp::IsNotZero as u8;
+const UNIOP_SIGN: u8 = UniOp::Sign as u8;
+const UNIOP_ABS2: u8 = UniOp::Abs2 as u8;
 
 const BINOP_PLUS: u8 = BinOp::Plus as u8;
 const BINOP_MINUS: u8 = BinOp::Minus as u8;
@@ -478,6 +480,11 @@ impl MirIterator {
                 dst,
                 s1,
             }),
+            UNIOP_ABS2 => Ok(Instruction::Uni {
+                op: UniOp::Abs2,
+                dst,
+                s1,
+            }),
             UNIOP_ROOT => Ok(Instruction::Uni {
                 op: UniOp::Root,
                 dst,
@@ -540,6 +547,11 @@ impl MirIterator {
             }),
             UNIOP_ISNOTZERO => Ok(Instruction::Uni {
                 op: UniOp::IsNotZero,
+                dst,
+                s1,
+            }),
+            UNIOP_SIGN => Ok(Instruction::Uni {
+                op: UniOp::Sign,
                 dst,
                 s1,
             }),

@@ -52,6 +52,7 @@ pub struct Complexifier {
     mir: Mir,
     real_locs: HashSet<Loc>,
     real_regs: [bool; 32],
+    root_defined: bool,
 }
 
 impl Complexifier {
@@ -61,6 +62,7 @@ impl Complexifier {
             // Real declarations have the same scalar offsets as MIR loads.
             real_locs: reals.clone(),
             real_regs: [false; 32],
+            root_defined: false,
         }
     }
 
@@ -298,6 +300,16 @@ impl Generator for Complexifier {
         self.copy_real(dst, s1);
     }
 
+    fn sign(&mut self, dst: Reg, s1: Reg) {
+        self.mir.sign(re(dst), re(s1));
+
+        if !self.is_real_reg(s1) {
+            self.mir.sign(im(dst), im(s1));
+        }
+
+        self.copy_real(dst, s1);
+    }
+
     fn abs(&mut self, dst: Reg, s1: Reg) {
         if self.is_real_reg(s1) {
             self.mir.abs(re(dst), re(s1));
@@ -312,34 +324,67 @@ impl Generator for Complexifier {
         }
     }
 
+    fn abs2(&mut self, dst: Reg, s1: Reg) {
+        if self.is_real_reg(s1) {
+            self.mir.abs(re(dst), re(s1));
+            self.set_reg_real(dst);
+        } else {
+            self.mir.times(Self::T0, re(s1), re(s1));
+            self.mir.times(Self::T1, im(s1), im(s1));
+            self.mir.plus(re(dst), Self::T0, Self::T1);
+            self.mir.xor(im(dst), im(dst), im(dst));
+            self.set_reg_complex(dst);
+        }
+    }
+
     fn root(&mut self, dst: Reg, s1: Reg) {
-        let x = Self::T0;
-        let y = Self::T1;
-
         self.ensure_complex(s1);
+        self.fmov(Reg::Temp, s1);
+        self.call_funclet("@complex_root");
+        self.set_reg_complex(Reg::Ret);
+        self.fmov(dst, Reg::Ret);
 
-        self.mir.xor(x, x, x);
-        self.mir.lt(x, x, re(s1)); // lt intead of ge for SSE to work correctly
-        self.mir.save_stack(x, 1);
+        if !self.root_defined {
+            self.root_defined = true;
 
-        self.mir.times(x, re(s1), re(s1));
-        self.mir.fused_mul_add(x, im(s1), im(s1), x);
+            self.branch("@jump_over_complex_root");
+            self.set_label("@complex_root");
 
-        self.mir.root(x, x);
-        self.mir.abs(y, re(s1));
-        self.mir.plus(x, x, y);
-        self.mir.half(x, x);
-        self.mir.root(x, x);
-        self.mir.divide(y, im(s1), x);
-        self.mir.half(y, y);
+            let s1 = Reg::Temp;
+            let x = Self::T0;
+            let y = Self::T1;
 
-        self.mir.eq(re(dst), y, y);
-        self.mir.and(y, y, re(dst));
+            self.mir.xor(x, x, x);
+            self.mir.lt(x, x, re(s1)); // lt intead of ge for SSE to work correctly
+            self.mir.save_stack(x, 2);
 
-        self.mir.ifelse(re(dst), x, y, Loc::Stack(1));
-        self.mir.ifelse(im(dst), y, x, Loc::Stack(1));
+            self.mir.times(x, re(s1), re(s1));
+            self.mir.fused_mul_add(x, im(s1), im(s1), x);
 
-        self.set_reg_complex(dst);
+            self.mir.root(x, x);
+            self.mir.abs(y, re(s1));
+            self.mir.plus(x, x, y);
+            self.mir.half(x, x);
+            self.mir.root(x, x);
+            self.mir.divide(y, im(s1), x);
+            self.mir.half(y, y);
+
+            self.mir.eq(re(s1), y, y);
+            self.mir.and(y, y, re(s1));
+
+            // note that we need to use `temp` and not `dst` here because
+            // `ifelse` in x64 uses Reg::Temp, which is im(dst).
+            self.mir.ifelse(re(s1), x, y, Loc::Stack(2));
+            self.mir.ifelse(im(s1), y, x, Loc::Stack(2));
+
+            self.mir.sign(x, re(s1));
+            self.mir.xor(re(Reg::Ret), re(s1), x);
+            self.mir.xor(im(Reg::Ret), im(s1), x);
+
+            self.ret();
+
+            self.set_label("@jump_over_complex_root");
+        }
     }
 
     fn real_root(&mut self, dst: Reg, s1: Reg) {
@@ -655,12 +700,16 @@ impl Generator for Complexifier {
     }
 
     fn eq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.mir.eq(im(dst), im(s1), im(s2));
         self.mir.eq(re(dst), re(s1), re(s2));
+        self.mir.and(re(dst), re(dst), im(dst));
         self.set_reg_real(dst);
     }
 
     fn neq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
+        self.mir.neq(im(dst), im(s1), im(s2));
         self.mir.neq(re(dst), re(s1), re(s2));
+        self.mir.and(re(dst), re(dst), im(dst));
         self.set_reg_real(dst);
     }
 

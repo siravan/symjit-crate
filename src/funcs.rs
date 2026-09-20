@@ -118,6 +118,45 @@ fn test_external_evaluators_complex_simd() -> Result<()> {
     Ok(())
 }
 
+fn test_factorial() -> Result<()> {
+    let mut config = Config::default();
+    config.set_complex(false);
+
+    let mut df = Defuns::new();
+    df.add_self("f");
+    config.set_defuns(df);
+
+    let mut ev = Translator::new(config);
+    ev.set_num_params(1);
+    ev.append_constant(Complex::new(-1.0, 0.0))?;
+    ev.append_constant(Complex::new(1.0, 0.0))?;
+
+    ev.append_if_else(&Slot::Param(0), 5)?;
+    ev.append_add(&Slot::Temp(0), &[Slot::Param(0), Slot::Const(0)], 0)?;
+    ev.append_fun(&Slot::Temp(1), "f", &[Slot::Temp(0)], false)?;
+    ev.append_mul(&Slot::Temp(2), &[Slot::Param(0), Slot::Temp(1)], 0)?;
+    ev.append_goto(7)?;
+    ev.append_label(5)?;
+    ev.append_assign(&Slot::Temp(3), &Slot::Const(1))?;
+    ev.append_label(7)?;
+    ev.append_join(
+        &Slot::Out(0),
+        &Slot::Param(0),
+        &Slot::Temp(2),
+        &Slot::Temp(3),
+    )?;
+
+    let app = ev.compile()?.seal()?;
+
+    let args = [6.0];
+    let mut outs = [0.0];
+
+    app.evaluate(&args, &mut outs);
+
+    assert!(outs[0] == 720.0);
+    Ok(())
+}
+
 fn pass(what: &str) {
     println!("**** test {:?} passed. ****", what);
 }
@@ -134,6 +173,9 @@ pub fn main() -> Result<()> {
 
     test_external_evaluators_complex_simd()?;
     pass("external complex simd evaluator");
+
+    test_factorial()?;
+    pass("test factorial");
 
     Ok(())
 }

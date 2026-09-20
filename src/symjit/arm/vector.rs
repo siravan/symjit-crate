@@ -48,11 +48,8 @@ impl ArmSimdGenerator {
         let ofs = ABI_AREA as u32 * REG_SIZE;
         let ker = self.config.is_kernel_func(op);
 
-        let label = format!("_simd_{}_", op);
-        load_long(&mut self.a, CALL, &label);
-
         if ker {
-            self.emit(arm! {add x(0), x(SP), #0});
+            self.emit(arm! {add x(0), x(STACK), #0});
             self.emit(arm! {eor x(1), x(1), x(1)});
             self.emit(arm! {eor x(2), x(2), x(2)});
             self.emit(arm! {add x(3), x(STACK), #ofs});
@@ -60,10 +57,16 @@ impl ArmSimdGenerator {
             load_x_from_label(&mut self.a, 0, &format!("_env_{}_", op));
             self.emit(arm! {add x(1), x(STACK), #ofs});
             self.emit(arm! {movz x(2), #num_args});
-            self.emit(arm! {add x(3), x(SP), #0});
+            self.emit(arm! {add x(3), x(STACK), #0});
         }
 
-        self.emit(arm! {blr x(CALL)});
+        if op == "@self" {
+            self.call_funclet("@self");
+        } else {
+            let label = format!("_simd_{}_", op);
+            load_long(&mut self.a, CALL, &label);
+            self.emit(arm! {blr x(CALL)});
+        }
 
         if self.config.is_complex() {
             let l2 = self.a.create_label();
@@ -72,8 +75,8 @@ impl ArmSimdGenerator {
                 self.emit(arm! {tst x(0), x(0)});
                 let l1 = self.a.create_label();
                 self.jump(&l1, 0, |offset, _| arm! {b.eq label(offset)});
-                self.emit(arm! {ldr q(2), [sp, #0]});
-                self.emit(arm! {ldr q(3), [sp, #16]});
+                self.emit(arm! {ldr q(2), [x(STACK), #0]});
+                self.emit(arm! {ldr q(3), [x(STACK), #16]});
                 self.emit(arm! {uzp1 q(0), q(2), q(3)});
                 self.emit(arm! {uzp2 q(1), q(2), q(3)});
 
@@ -81,27 +84,24 @@ impl ArmSimdGenerator {
                 self.set_label(&l1);
             }
 
-            self.emit(arm! {ldr q(0), [sp, #0]});
-            self.emit(arm! {ldr q(1), [sp, #16]});
+            self.emit(arm! {ldr q(0), [x(STACK), #0]});
+            self.emit(arm! {ldr q(1), [x(STACK), #16]});
             self.set_label(&l2);
         } else {
-            self.emit(arm! {ldr q(0), [sp, #0]});
+            self.emit(arm! {ldr q(0), [x(STACK), #0]});
         }
 
         Ok(())
     }
 
     fn sub_stack(&mut self, size: u32) {
-        self.emit(arm! {sub sp, sp, #size & 0x0fff});
-        if size >> 12 != 0 {
-            self.emit(arm! {sub sp, sp, #size >> 12, lsl #12});
-        }
+        sub_stack(&mut self.a, size);
     }
 
     /*
     fn add_stack(&mut self, size: u32) {
         if size >> 12 != 0 {
-            self.emit(arm! {add sp, sp, #size >> 12, lsl #12});
+            self.emit(arm! {add x(STACK), sp, #size >> 12, lsl #12});
         }
         self.emit(arm! {add sp, sp, #size & 0x0fff});
     }
@@ -244,11 +244,11 @@ impl Generator for ArmSimdGenerator {
     }
 
     fn load_stack(&mut self, dst: Reg, idx: u32) {
-        load_q_from_mem(&mut self.a, ϕ(dst), SP, idx);
+        load_q_from_mem(&mut self.a, ϕ(dst), STACK, idx);
     }
 
     fn save_stack(&mut self, dst: Reg, idx: u32) {
-        save_q_to_mem(&mut self.a, ϕ(dst), SP, idx);
+        save_q_to_mem(&mut self.a, ϕ(dst), STACK, idx);
     }
 
     fn load_mem_complex(&mut self, xd: Reg, yd: Reg, idx: u32) {
@@ -269,14 +269,10 @@ impl Generator for ArmSimdGenerator {
     }
 
     fn load_stack_complex(&mut self, xd: Reg, yd: Reg, idx: u32) {
-        // self.load_stack(xd, idx);
-        // self.load_stack(yd, idx + 1);
         load_paired_q_from_mem(&mut self.a, ϕ(xd), ϕ(yd), STACK, idx);
     }
 
     fn save_stack_complex(&mut self, xs: Reg, ys: Reg, idx: u32) {
-        // self.save_stack(xs, idx);
-        // self.save_stack(ys, idx + 1);
         save_paired_q_to_mem(&mut self.a, ϕ(xs), ϕ(ys), STACK, idx);
     }
 
@@ -356,8 +352,18 @@ impl Generator for ArmSimdGenerator {
         self.emit(arm! {fneg q(ϕ(dst)), q(ϕ(s1))});
     }
 
+    fn sign(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fmov q(ϕ(Reg::Temp)), #0.0});
+        self.emit(arm! {fneg q(ϕ(Reg::Temp)), q(ϕ(Reg::Temp))});
+        self.and(dst, s1, Reg::Temp);
+    }
+
     fn abs(&mut self, dst: Reg, s1: Reg) {
         self.emit(arm! {fabs q(ϕ(dst)), q(ϕ(s1))});
+    }
+
+    fn abs2(&mut self, dst: Reg, s1: Reg) {
+        self.times(dst, s1, s1);
     }
 
     fn root(&mut self, dst: Reg, s1: Reg) {
@@ -617,35 +623,30 @@ impl Generator for ArmSimdGenerator {
         match num_args {
             1 => {
                 // self.emit(arm! {sub sp, sp, #16});
-                self.emit(arm! {str q(0), [sp, #0]});
+                self.emit(arm! {str q(0), [x(STACK), #0]});
 
                 self.emit(arm! {blr x(CALL)});
-                self.emit(arm! {str d(0), [sp, #0]});
+                self.emit(arm! {str d(0), [x(STACK), #0]});
 
-                self.emit(arm! {ldr d(0), [sp, #8]});
+                self.emit(arm! {ldr d(0), [x(STACK), #8]});
                 self.emit(arm! {blr x(CALL)});
-                self.emit(arm! {str d(0), [sp, #8]});
+                self.emit(arm! {str d(0), [x(STACK), #8]});
 
-                self.emit(arm! {ldr q(0), [sp, #0]});
-                // self.emit(arm! {add sp, sp, #16});
+                self.emit(arm! {ldr q(0), [x(STACK), #0]});
             }
             2 => {
-                // self.emit(arm! {sub sp, sp, #32});
-                self.emit(arm! {str q(0), [sp, #0]});
-                self.emit(arm! {str q(1), [sp, #16]});
+                self.emit(arm! {str q(0), [x(STACK), #0]});
+                self.emit(arm! {str q(1), [x(STACK), #16]});
 
-                // self.emit(arm! {ldr d(0), [sp, #0]});
-                // self.emit(arm! {ldr d(1), [sp, #16]});
                 self.emit(arm! {blr x(CALL)});
-                self.emit(arm! {str d(0), [sp, #0]});
+                self.emit(arm! {str d(0), [x(STACK), #0]});
 
-                self.emit(arm! {ldr d(0), [sp, #8]});
-                self.emit(arm! {ldr d(1), [sp, #24]});
+                self.emit(arm! {ldr d(0), [x(STACK), #8]});
+                self.emit(arm! {ldr d(1), [x(STACK), #24]});
                 self.emit(arm! {blr x(CALL)});
-                self.emit(arm! {str d(0), [sp, #8]});
+                self.emit(arm! {str d(0), [x(STACK), #8]});
 
-                self.emit(arm! {ldr q(0), [sp, #0]});
-                // self.emit(arm! {add sp, sp, #32});
+                self.emit(arm! {ldr q(0), [x(STACK), #0]});
             }
             _ => return Err(anyhow!("invalid number of arguments")),
         }
@@ -670,62 +671,58 @@ impl Generator for ArmSimdGenerator {
 
         match num_args {
             1 => {
-                // self.emit(arm! {sub sp, sp, #32});
-                self.emit(arm! {str q(0), [sp, #0]});
-                self.emit(arm! {str q(1), [sp, #16]});
+                self.emit(arm! {str q(0), [x(STACK), #0]});
+                self.emit(arm! {str q(1), [x(STACK), #16]});
 
-                self.emit(arm! {add x(0), x(SP), #32});
+                self.emit(arm! {add x(0), x(STACK), #32});
                 self.emit(arm! {blr x(CALL)});
-                self.emit(arm! {ldr d(0), [sp, #32]});
-                self.emit(arm! {ldr d(1), [sp, #40]});
-                self.emit(arm! {str d(0), [sp, #0]});
-                self.emit(arm! {str d(1), [sp, #16]});
+                self.emit(arm! {ldr d(0), [x(STACK), #32]});
+                self.emit(arm! {ldr d(1), [x(STACK), #40]});
+                self.emit(arm! {str d(0), [x(STACK), #0]});
+                self.emit(arm! {str d(1), [x(STACK), #16]});
 
-                self.emit(arm! {ldr d(0), [sp, #8]});
-                self.emit(arm! {ldr d(1), [sp, #24]});
-                self.emit(arm! {add x(0), x(SP), #32});
+                self.emit(arm! {ldr d(0), [x(STACK), #8]});
+                self.emit(arm! {ldr d(1), [x(STACK), #24]});
+                self.emit(arm! {add x(0), x(STACK), #32});
                 self.emit(arm! {blr x(CALL)});
-                self.emit(arm! {ldr d(0), [sp, #32]});
-                self.emit(arm! {ldr d(1), [sp, #40]});
-                self.emit(arm! {str d(0), [sp, #8]});
-                self.emit(arm! {str d(1), [sp, #24]});
+                self.emit(arm! {ldr d(0), [x(STACK), #32]});
+                self.emit(arm! {ldr d(1), [x(STACK), #40]});
+                self.emit(arm! {str d(0), [x(STACK), #8]});
+                self.emit(arm! {str d(1), [x(STACK), #24]});
 
-                self.emit(arm! {ldr q(0), [sp, #0]});
-                self.emit(arm! {ldr q(1), [sp, #16]});
-                // self.emit(arm! {add sp, sp, #32});
+                self.emit(arm! {ldr q(0), [x(STACK), #0]});
+                self.emit(arm! {ldr q(1), [x(STACK), #16]});
             }
             2 => {
-                // self.emit(arm! {sub sp, sp, #64});
-                self.emit(arm! {str q(0), [sp, #0]});
-                self.emit(arm! {str q(1), [sp, #16]});
-                self.emit(arm! {str q(2), [sp, #32]});
-                self.emit(arm! {str q(3), [sp, #48]});
+                self.emit(arm! {str q(0), [x(STACK), #0]});
+                self.emit(arm! {str q(1), [x(STACK), #16]});
+                self.emit(arm! {str q(2), [x(STACK), #32]});
+                self.emit(arm! {str q(3), [x(STACK), #48]});
 
-                self.emit(arm! {str d(2), [sp, #64]});
-                self.emit(arm! {str d(3), [sp, #72]});
-                self.emit(arm! {add x(0), x(SP), #64});
+                self.emit(arm! {str d(2), [x(STACK), #64]});
+                self.emit(arm! {str d(3), [x(STACK), #72]});
+                self.emit(arm! {add x(0), x(STACK), #64});
                 self.emit(arm! {blr x(CALL)});
-                self.emit(arm! {ldr d(0), [sp, #64]});
-                self.emit(arm! {ldr d(1), [sp, #72]});
-                self.emit(arm! {str d(0), [sp, #0]});
-                self.emit(arm! {str d(1), [sp, #16]});
+                self.emit(arm! {ldr d(0), [x(STACK), #64]});
+                self.emit(arm! {ldr d(1), [x(STACK), #72]});
+                self.emit(arm! {str d(0), [x(STACK), #0]});
+                self.emit(arm! {str d(1), [x(STACK), #16]});
 
-                self.emit(arm! {ldr d(0), [sp, #8]});
-                self.emit(arm! {ldr d(1), [sp, #24]});
-                self.emit(arm! {ldr d(2), [sp, #40]});
-                self.emit(arm! {ldr d(3), [sp, #56]});
-                self.emit(arm! {str d(2), [sp, #64]});
-                self.emit(arm! {str d(3), [sp, #72]});
-                self.emit(arm! {add x(0), x(SP), #64});
+                self.emit(arm! {ldr d(0), [x(STACK), #8]});
+                self.emit(arm! {ldr d(1), [x(STACK), #24]});
+                self.emit(arm! {ldr d(2), [x(STACK), #40]});
+                self.emit(arm! {ldr d(3), [x(STACK), #56]});
+                self.emit(arm! {str d(2), [x(STACK), #64]});
+                self.emit(arm! {str d(3), [x(STACK), #72]});
+                self.emit(arm! {add x(0), x(STACK), #64});
                 self.emit(arm! {blr x(CALL)});
-                self.emit(arm! {ldr d(0), [sp, #64]});
-                self.emit(arm! {ldr d(1), [sp, #72]});
-                self.emit(arm! {str d(0), [sp, #8]});
-                self.emit(arm! {str d(1), [sp, #24]});
+                self.emit(arm! {ldr d(0), [x(STACK), #64]});
+                self.emit(arm! {ldr d(1), [x(STACK), #72]});
+                self.emit(arm! {str d(0), [x(STACK), #8]});
+                self.emit(arm! {str d(1), [x(STACK), #24]});
 
-                self.emit(arm! {ldr q(0), [sp, #0]});
-                self.emit(arm! {ldr q(1), [sp, #16]});
-                // self.emit(arm! {add sp, sp, #64});
+                self.emit(arm! {ldr q(0), [x(STACK), #0]});
+                self.emit(arm! {ldr q(1), [x(STACK), #16]});
             }
             _ => return Err(anyhow!("invalid number of arguments")),
         }
@@ -738,7 +735,7 @@ impl Generator for ArmSimdGenerator {
     }
 
     fn call_funclet(&mut self, label: &str) {
-        self.jump(label, 0, |offset, _| arm! {bl label(offset)});
+        call_funclet(&mut self.a, label);
     }
 
     fn ifelse(&mut self, dst: Reg, true_val: Reg, false_val: Reg, idx: u32) {
@@ -834,7 +831,7 @@ impl ArmSimdGenerator {
 
         let frame_size = align_stack((regions.count_states + regions.count_obs) * REG_SIZE);
         self.sub_stack(frame_size);
-        self.emit(arm! {mov x(MEM), sp});
+        self.emit(arm! {mov x(MEM), x(SP)});
         self.emit(arm! {lsr x(IDX), x(IDX), #1}); // changing indexing from f64x2 to f64
 
         for i in 0..regions.count_states {
@@ -878,7 +875,7 @@ impl ArmSimdGenerator {
         let frame_size = align_stack(regions.count_params * REG_SIZE);
         self.sub_stack(frame_size);
         self.emit(arm! {mov x(SCRATCH2), x(PARAMS)});
-        self.emit(arm! {mov x(PARAMS), sp});
+        self.emit(arm! {mov x(PARAMS), x(SP)});
 
         if regions.count_params >= 16 {
             self.emit(arm! {mov x(SCRATCH3), x(PARAMS)});
@@ -905,7 +902,7 @@ impl ArmSimdGenerator {
 
         self.sub_stack(align_stack(regions.count_obs * REG_SIZE));
         self.emit(arm! {mov x(STATES), x(MEM)});
-        self.emit(arm! {mov x(MEM), sp});
+        self.emit(arm! {mov x(MEM), x(SP)});
 
         self.set_label("@main");
 

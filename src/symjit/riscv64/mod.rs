@@ -61,7 +61,7 @@ impl RiscV {
     // const t3: u8 = 28;
     // const t4: u8 = 29;
     // const t5: u8 = 30;
-    // const t6: u8 = 31;
+    const t6: u8 = 31;
 
     const ft0: u8 = 0;
     const ft1: u8 = 1;
@@ -229,7 +229,7 @@ impl RiscV {
         let ofs = ABI_AREA as u32 * REG_SIZE;
 
         if self.config.is_kernel_func(op) {
-            self.emit(rvv! {addi x(Self::a0), x(SP), 0});
+            self.emit(rvv! {addi x(Self::a0), x(STACK), 0});
             self.emit(rvv! {addi x(Self::a1), x(Self::zero), 0});
             self.emit(rvv! {addi x(Self::a2), x(Self::zero), 0});
             self.emit(rvv! {addi x(Self::a3), x(STACK), ofs});
@@ -237,10 +237,14 @@ impl RiscV {
             self.load_x_from_label(Self::a0, &format!("_env_{}_", op));
             self.emit(rvv! {addi x(Self::a1), x(STACK), ofs});
             self.emit(rvv! {addi x(Self::a2), x(Self::zero), num_args});
-            self.emit(rvv! {addi x(Self::a3), x(SP), 0});
+            self.emit(rvv! {addi x(Self::a3), x(STACK), 0});
         }
 
-        self.j_indirect(&format!("_func_{}_", op), Self::ra);
+        if op == "@self" {
+            self.call_funclet("@self");
+        } else {
+            self.j_indirect(&format!("_func_{}_", op), Self::ra);
+        }
 
         self.load_stack(Reg::Ret, 0);
         if self.config.is_complex() {
@@ -513,19 +517,11 @@ impl Generator for RiscV {
     }
 
     fn load_stack(&mut self, dst: Reg, idx: u32) {
-        if idx < 16 {
-            self.load_float(ϕ(dst), SP, 8 * idx);
-        } else {
-            self.load_float(ϕ(dst), STACK, 8 * idx);
-        }
+        self.load_float(ϕ(dst), STACK, 8 * idx);
     }
 
     fn save_stack(&mut self, dst: Reg, idx: u32) {
-        if idx < 16 {
-            self.save_float(ϕ(dst), SP, 8 * idx);
-        } else {
-            self.save_float(ϕ(dst), STACK, 8 * idx);
-        }
+        self.save_float(ϕ(dst), STACK, 8 * idx);
     }
 
     fn load_mem_complex(&mut self, xd: Reg, yd: Reg, idx: u32) {
@@ -541,19 +537,11 @@ impl Generator for RiscV {
     }
 
     fn load_stack_complex(&mut self, xd: Reg, yd: Reg, idx: u32) {
-        if idx < 16 {
-            self.load_complex(xd, yd, SP, 8 * idx);
-        } else {
-            self.load_complex(xd, yd, STACK, 8 * idx);
-        }
+        self.load_complex(xd, yd, STACK, 8 * idx);
     }
 
     fn save_stack_complex(&mut self, xs: Reg, ys: Reg, idx: u32) {
-        if idx < 16 {
-            self.save_complex(xs, ys, SP, 8 * idx);
-        } else {
-            self.save_complex(xs, ys, STACK, 8 * idx);
-        }
+        self.save_complex(xs, ys, STACK, 8 * idx);
     }
 
     fn save_stack_result(&mut self, idx: u32) {
@@ -598,8 +586,17 @@ impl Generator for RiscV {
         self.emit(rvv! {fneg.d f(ϕ(dst)), f(ϕ(s1))});
     }
 
+    fn sign(&mut self, dst: Reg, s1: Reg) {
+        self.emit(rvv! {fmv.d.x f(ϕ(Reg::Temp)), x(Self::zero)});
+        self.emit(rvv! {fsgnj.d f(ϕ(dst)), f(ϕ(Reg::Temp)), f(ϕ(s1))});
+    }
+
     fn abs(&mut self, dst: Reg, s1: Reg) {
         self.emit(rvv! {fabs.d f(ϕ(dst)), f(ϕ(s1))});
+    }
+
+    fn abs2(&mut self, dst: Reg, s1: Reg) {
+        self.times(dst, s1, s1);
     }
 
     fn root(&mut self, dst: Reg, s1: Reg) {
@@ -860,7 +857,7 @@ impl Generator for RiscV {
     }
 
     fn call_complex(&mut self, op: &str, num_args: usize) -> Result<()> {
-        self.emit(rvv! {mv x(Self::a0), x(Self::sp)});
+        self.emit(rvv! {mv x(Self::a0), x(STACK)});
 
         if num_args == 2 {
             self.save_stack(Reg::Gen(0), 0);
@@ -875,6 +872,13 @@ impl Generator for RiscV {
     }
 
     fn call_funclet(&mut self, label: &str) {
+        if label == "@complex_root" {
+            self.emit(rvv! {mv x(Self::t6), x(Self::ra)});
+            self.j(label, Self::ra);
+            self.emit(rvv! {mv x(Self::ra), x(Self::t6)});
+            return;
+        }
+
         self.j(label, Self::ra);
     }
 
@@ -883,7 +887,7 @@ impl Generator for RiscV {
     }
 
     fn ifelse(&mut self, dst: Reg, true_val: Reg, false_val: Reg, idx: u32) {
-        self.load_int(Self::t0, Self::sp, 8 * idx);
+        self.load_int(Self::t0, STACK, 8 * idx);
         self.emit(rvv! {fmv.x.d x(Self::t1), f(ϕ(true_val))});
         self.emit(rvv! {fmv.x.d x(Self::t2), f(ϕ(false_val))});
         self.emit(rvv! {and x(Self::t1), x(Self::t1), x(Self::t0)});
@@ -898,11 +902,11 @@ impl Generator for RiscV {
     fn prologue_fast(&mut self, cap: usize, count_states: usize, count_obs: usize) {
         self.sub_stack(32);
 
-        self.emit(rvv! {sd x(Self::ra), x(Self::sp), 0});
-        self.emit(rvv! {sd x(Self::fp), x(Self::sp), 8});
-        self.emit(rvv! {sd x(MEM), x(Self::sp), 16});
-        self.emit(rvv! {sd x(STACK), x(Self::sp), 24});
-        self.emit(rvv! {mv x(Self::fp), x(Self::sp)});
+        self.emit(rvv! {sd x(Self::ra), x(SP), 0});
+        self.emit(rvv! {sd x(Self::fp), x(SP), 8});
+        self.emit(rvv! {sd x(MEM), x(SP), 16});
+        self.emit(rvv! {sd x(STACK), x(SP), 24});
+        self.emit(rvv! {mv x(Self::fp), x(SP)});
 
         let frame_size = align_stack((count_states + count_obs) as u32 * self.reg_size());
         self.sub_stack(frame_size);
@@ -926,11 +930,11 @@ impl Generator for RiscV {
     ) {
         self.emit(rvv! {fld f(Self::fa0), x(MEM), 8*idx_ret});
 
-        self.emit(rvv! {mv x(Self::sp), x(Self::fp)});
-        self.emit(rvv! {ld x(Self::ra), x(Self::sp), 0});
-        self.emit(rvv! {ld x(Self::fp), x(Self::sp), 8});
-        self.emit(rvv! {ld x(MEM), x(Self::sp), 16});
-        self.emit(rvv! {ld x(STACK), x(Self::sp), 24});
+        self.emit(rvv! {mv x(SP), x(Self::fp)});
+        self.emit(rvv! {ld x(Self::ra), x(SP), 0});
+        self.emit(rvv! {ld x(Self::fp), x(SP), 8});
+        self.emit(rvv! {ld x(MEM), x(SP), 16});
+        self.emit(rvv! {ld x(STACK), x(SP), 24});
 
         self.add_stack(32);
 
@@ -961,7 +965,7 @@ impl Generator for RiscV {
 
         let size = align_stack((count_states + count_obs) as u32 * self.reg_size());
         self.sub_stack(size);
-        self.emit(rvv! {mv x(MEM), x(Self::sp)});
+        self.emit(rvv! {mv x(MEM), x(SP)});
         self.emit(rvv! {slli x(IDX), x(IDX), 3});
 
         if count_states > 16 {

@@ -77,7 +77,7 @@ impl AmdComplexGenerator {
         let cap = ABI_AREA as u32;
 
         if self.config.is_kernel_func(op) {
-            self.amd.lea_mem(ARGS[0], SP, 4 * REG_SIZE as i32);
+            self.amd.lea_mem(ARGS[0], STACK, 4 * REG_SIZE as i32);
             self.amd.xor(ARGS[1], ARGS[1]);
             self.amd.xor(ARGS[2], ARGS[2]);
             self.amd.lea_mem(ARGS[3], STACK, (cap * REG_SIZE) as i32);
@@ -85,12 +85,16 @@ impl AmdComplexGenerator {
             self.amd.mov_reg_label(ARGS[0], &format!("_env_{}_", op));
             self.amd.lea_mem(ARGS[1], STACK, (cap * REG_SIZE) as i32);
             self.amd.mov_imm(ARGS[2], num_args as u32);
-            self.amd.lea_mem(ARGS[3], SP, 4 * REG_SIZE as i32);
+            self.amd.lea_mem(ARGS[3], STACK, 4 * REG_SIZE as i32);
         }
 
-        self.vzeroupper();
+        if op == "@self" {
+            self.call_funclet("@self");
+        } else {
+            self.vzeroupper();
+            self.amd.call_indirect(&format!("_func_{}_", op));
+        }
 
-        self.amd.call_indirect(&format!("_func_{}_", op));
         self.load_stack(Reg::Ret, 4);
 
         Ok(())
@@ -142,8 +146,7 @@ impl Generator for AmdComplexGenerator {
     }
 
     fn branch(&mut self, label: &str) {
-        self.amd.xor(Amd::RAX, Amd::RAX);
-        self.amd.jz(label);
+        self.amd.jmp(label);
     }
 
     /// jump to label if cond == is_else
@@ -210,22 +213,13 @@ impl Generator for AmdComplexGenerator {
 
     fn load_stack(&mut self, dst: Reg, idx: u32) {
         self.last_load = self.amd.a.ip();
-
-        if idx < ABI_AREA as u32 {
-            self.amd.vmovdd_xmm_mem(ϕ(dst), SP, (idx * REG_SIZE) as i32);
-        } else {
-            self.amd
-                .vmovdd_xmm_mem(ϕ(dst), STACK, (idx * REG_SIZE) as i32);
-        }
+        self.amd
+            .vmovdd_xmm_mem(ϕ(dst), STACK, (idx * REG_SIZE) as i32);
     }
 
     fn save_stack(&mut self, dst: Reg, idx: u32) {
-        if idx < ABI_AREA as u32 {
-            self.amd.vmovdd_mem_xmm(SP, (idx * REG_SIZE) as i32, ϕ(dst));
-        } else {
-            self.amd
-                .vmovdd_mem_xmm(STACK, (idx * REG_SIZE) as i32, ϕ(dst));
-        }
+        self.amd
+            .vmovdd_mem_xmm(STACK, (idx * REG_SIZE) as i32, ϕ(dst));
     }
 
     fn load_mem_complex(&mut self, _xd: Reg, _yd: Reg, _idx: u32) {}
@@ -284,6 +278,12 @@ impl Generator for AmdComplexGenerator {
         self.xor(dst, s1, Reg::Temp);
     }
 
+    fn sign(&mut self, dst: Reg, s1: Reg) {
+        self.load_const_by_name(Reg::Temp, "_minus_zero_");
+        self.amd.vunpckldd(ϕ(Reg::Temp), ϕ(Reg::Temp), ϕ(Reg::Temp));
+        self.and(dst, s1, Reg::Temp);
+    }
+
     fn abs(&mut self, dst: Reg, s1: Reg) {
         self.amd.vmuldd(T1, ϕ(s1), ϕ(s1));
         self.amd.vhadddd(T1, T1, T1);
@@ -292,35 +292,135 @@ impl Generator for AmdComplexGenerator {
         self.amd.vunpckldd(ϕ(dst), T2, T1);
     }
 
-    fn root(&mut self, dst: Reg, s1: Reg) {
-        self.amd.vmovq_reg_xmm(Amd::RAX, ϕ(s1));
-
+    fn abs2(&mut self, dst: Reg, s1: Reg) {
         self.amd.vmuldd(T1, ϕ(s1), ϕ(s1));
-        self.amd.vhadddd(T1, T1, T1);
+        self.amd.vhadddd(T2, T1, T1);
+        self.amd.vxorpd(T1, T1, T1);
+        self.amd.vunpckldd(ϕ(dst), T2, T1);
+    }
 
+    /*
+     * root uses a classic square root algorithm to find the square root of a complex number.
+     * It is a conservative algorithm, but has a branch depending on whether the real part of
+     * the input is non-negative or negative.
+     *
+     * We tried to avoid the branch in two different ways, but both were either similar or slightly
+     * slower than the standard code.
+     *
+     * The first approach is proposed by Claude code based on masking instead of the branch:
+     *
+     '''
+        // The branch-free code was written with the help of Claude code.
+        // It works correctly; however, micro-benchmarking (examples/composer/julia.py)
+        // shows 1-2% performance degradation. Therefore, we use the standard code below.
+        // branch-free selection: compute a mask M = (re < 0), duplicated
+        // to both lanes, and blend the re>=0 and re<0 results with it
+        // instead of jumping over the correction.
+        self.amd.vmuldd(T1, ϕ(Reg::Ret), ϕ(Reg::Ret));
+        self.amd.vhadddd(T1, T1, T1);
         self.amd.vsqrtsd(T1, T1);
         self.amd.vmovsd_xmm_label(T0, "_minus_zero_");
-        self.amd.vandnpd(T2, T0, ϕ(s1));
+        self.amd.vandnpd(T2, T0, ϕ(Reg::Ret));
         self.amd.vaddsd(T1, T1, T2);
         self.amd.vmovsd_xmm_label(T0, "_half_");
         self.amd.vmulsd(T1, T1, T0);
         self.amd.vsqrtsd(T1, T1);
-
-        self.amd.vunpckhdd(T2, ϕ(s1), ϕ(s1));
+        self.amd.vunpckhdd(T2, ϕ(Reg::Ret), ϕ(Reg::Ret));
         self.amd.vdivsd(T2, T2, T1);
         self.amd.vmulsd(T2, T2, T0);
-
         self.amd.vcmpeqsd(T0, T2, T2);
         self.amd.vandpd(T2, T2, T0);
+        self.amd.vunpckldd(T0, T0, T0); // T0 = M
+        // sign(t), single lane meaningful; `Reg::Ret` (the original z)
+        // is no longer needed after this, so it is reused as scratch.
+        self.amd.vmovsd_xmm_label(ϕ(Reg::Ret), "_minus_zero_");
+        self.amd.vandpd(ϕ(Reg::Ret), ϕ(Reg::Ret), T2); // Ret = sign(t)
+        self.amd.vxorpd(T1, T1, ϕ(Reg::Ret)); // T1 = copysign(w, t)
+        self.amd.vxorpd(T2, T2, ϕ(Reg::Ret)); // T2 = |t|
+        self.amd.vunpckldd(T1, T1, T2); // T1 = V = [copysign(w,t), |t|]
+        self.amd.vshufdd(T2, T1, T1, 1); // T2 = swap(V) = [|t|, copysign(w,t)] (re<0 case)
+        self.amd.vunpckldd(ϕ(Reg::Ret), ϕ(Reg::Ret), ϕ(Reg::Ret)); // Ret = dup(sign(t))
+        self.amd.vxorpd(T1, T1, ϕ(Reg::Ret)); // T1 = V ^ dup(sign(t)) = [w, t] (re>=0 case)
+        self.amd.vandpd(ϕ(Reg::Ret), T0, T2); // Ret = M & (re<0 case)
+        self.amd.vandnpd(T0, T0, T1); // T0 = ~M & (re>=0 case)
+        self.amd.vorpd(ϕ(Reg::Ret), ϕ(Reg::Ret), T0); // Ret = final result
+        self.amd.ret()
+    ```
+    *
+    * The second approach is based on calculating both the real and imaginary parts together
+    * using f64x2 SIMD instructions:
 
-        self.amd.vunpckldd(ϕ(dst), T2, T1);
+    ```
+        self.amd.vmuldd(T1, ϕ(Reg::Ret), ϕ(Reg::Ret)); // T1 = y^2:x^2
+        self.amd.vhadddd(T1, T1, T1); // T1 = x^2+y^2:x^2+y^2
+        self.amd.vsqrtpd(T1, T1); // T1 = sqrt(x^2+y^2):sqrt(x^2+y^2)
+        self.amd.vunpckldd(T2, ϕ(Reg::Ret), ϕ(Reg::Ret)); // T2 = x:x
+        self.amd.vaddsubdd(T1, T1, T2); // T1 = sqrt(x^2+y^2)+x:sqrt(x^2+y^2)-x
+        self.amd.vbroadcastsd_label(T0, "_half_"); // T0 = 0.5:0.5
+        self.amd.vmulpd(T1, T1, T0); // T1 = (sqrt(x^2+y^2)+x)/2:(sqrt(x^2+y^2)-x)/2
+        self.amd.vsqrtpd(T1, T1); // T1 = sqrt((sqrt(x^2+y^2)+x)/2):sqrt((sqrt(x^2+y^2)-x)/2)
+        self.amd.vcmpeqdd(T0, T1, T1);
+        self.amd.vandpd(T1, T1, T0);
+        self.amd.vunpckhdd(T2, ϕ(Reg::Ret), ϕ(Reg::Ret));
+        self.amd.vmovsd_xmm_label(T0, "_minus_zero_");
+        self.amd.vandpd(T0, T0, T2); // T0 = sign(T2)
+        self.amd.vxorpd(T1, T1, T0); // T1 = copysign(T2, T1)
+        self.amd.vshufdd(ϕ(Reg::Ret), T1, T1, 1);
+        self.ret();
+    ```
+    */
+    fn root(&mut self, dst: Reg, s1: Reg) {
+        self.fmov(Reg::Ret, s1);
+        self.call_funclet("@complex_root");
+        self.fmov(dst, Reg::Ret);
 
-        let label = format!(".Y{}", self.amd.a.ip());
-        // self.amd.mov_reg_mem(Amd::RAX, SP, 0);
-        self.amd.or(Amd::RAX, Amd::RAX);
-        self.amd.js(&label);
-        self.amd.vshufdd(ϕ(dst), ϕ(dst), ϕ(dst), 1);
-        self.set_label(&label);
+        if !self.amd.a.has_label("@complex_root") {
+            self.branch("@jump_over_complex_root");
+
+            let s1 = ϕ(Reg::Ret);
+            let dst = ϕ(Reg::Ret);
+
+            self.set_label("@complex_root");
+
+            self.amd.vbroadcastsd_label(T0, "_half_");
+            self.amd.vmuldd(s1, s1, T0);
+
+            self.amd.vmulsd(T1, s1, s1);
+            self.amd.vunpckhdd(T2, s1, s1);
+            self.amd.vfmadd231dd(T1, T2, T2);
+            self.amd.vsqrtsd(T1, T1); // T1 == sqrt(real(s1)^2 + imag(s1)^2) / 2
+
+            self.amd.vmovsd_xmm_label(T0, "_minus_zero_");
+            self.amd.vucomisd(s1, T0); // set the flags here for jmup lower down
+            self.amd.vandnpd(s1, T0, s1); // s1 = |real(s1)|
+            self.amd.vaddsd(T1, T1, s1); // T1 == (sqrt(real(s1)^2 + imag(s1)^2) + abs(real(s1))) / 2
+
+            self.amd.vsqrtsd(T1, T1); // T1 == sqrt(T1 == sqrt(real(s1)^2 + imag(s1)^2) + abs(real(s1)) / 2)
+            self.amd.vdivsd(T2, T2, T1); // T2 == imag(s1) / (2 * T1)
+
+            self.amd.vcmpeqsd(s1, T2, T2);
+            self.amd.vandpd(T2, T2, s1); // set T2 to 0 if it is NaN (if imag(s1) is 0)
+
+            /*
+             * At this stage, T0 = _minus_zero_, and T1 and T2 are the preliminary real/imag results.
+             */
+
+            self.amd.jnb("@complex_root_l1");
+
+            // real(s1) < 0
+            self.amd.vandpd(T0, T0, T2); // T0 = sign(T2)
+            self.amd.vxorpd(T1, T1, T0); // T1 = copysign(T2, T1)
+            self.amd.vxorpd(T2, T2, T0); // T2 = |T2|
+            self.amd.vunpckldd(dst, T2, T1); // T1 <-> T2
+            self.ret();
+
+            // real(s1) >= 0
+            self.set_label("@complex_root_l1");
+            self.amd.vunpckldd(dst, T1, T2);
+            self.ret();
+
+            self.set_label("@jump_over_complex_root");
+        }
     }
 
     fn real_root(&mut self, dst: Reg, s1: Reg) {
@@ -520,13 +620,15 @@ impl Generator for AmdComplexGenerator {
     }
 
     fn eq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
-        binop!(self, vcmpeqsd, dst, s1, s2);
-        binop!(self, vunpckldd, dst, dst, dst);
+        binop!(self, vcmpeqdd, dst, s1, s2);
+        self.amd.vshufdd(T1, ϕ(dst), ϕ(dst), 1);
+        self.amd.vandpd(ϕ(dst), ϕ(dst), T1);
     }
 
     fn neq(&mut self, dst: Reg, s1: Reg, s2: Reg) {
         binop!(self, vcmpneqsd, dst, s1, s2);
-        binop!(self, vunpckldd, dst, dst, dst);
+        self.amd.vshufdd(T1, ϕ(dst), ϕ(dst), 1);
+        self.amd.vandpd(ϕ(dst), ϕ(dst), T1);
     }
 
     fn and(&mut self, dst: Reg, s1: Reg, s2: Reg) {
@@ -626,9 +728,9 @@ impl Generator for AmdComplexGenerator {
         self.vzeroupper();
 
         if cfg!(target_family = "windows") {
-            self.amd.lea_mem(Amd::R8, SP, 32);
+            self.amd.lea_mem(Amd::R8, STACK, 32);
         } else {
-            self.amd.lea_mem(Amd::RDI, SP, 32);
+            self.amd.lea_mem(Amd::RDI, STACK, 32);
         }
 
         self.amd.call_indirect(&label);

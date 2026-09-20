@@ -153,9 +153,16 @@ macro_rules! arm {
     (fmov x($rd:expr), d($rn:expr)) => {
         0x9e660000 | rd!($rd) | rn!($rn)
     };
-    (mov x($rd:expr), x($rm:expr)) => {
-        0xaa0003e0 | rd!($rd) | rm!($rm)
-    };
+    (mov x($rd:expr), x($rm:expr)) => {{
+        let rd = $rd;
+        let rm = $rm;
+
+        if rd == 31 || rm == 31 {
+            arm! {add x(rd), x(rm), #0}
+        } else {
+            arm! {orr x(rd), x(31), x(rm)}
+        }
+    }};
     (movz x($rd:expr), #$imm16:expr) => {
         0xd2800000 | rd!($rd) | imm16!($imm16)
     };
@@ -382,9 +389,41 @@ macro_rules! arm {
         0x5ee0d800 | rd!($rd) | rn!($rn)
     };
 
+    (fcmge d($rd:expr), d($rn:expr), #0.0) => {
+        0x7ee0c800 | rd!($rd) | rn!($rn)
+    };
+
+    (fcmlt d($rd:expr), d($rn:expr), #0.0) => {
+        0x5ee0e800 | rd!($rd) | rn!($rn)
+    };
+
     // compare d(..) with 0.0 and set the flags (NZCV)
     (fcmp d($rn:expr), #0.0) => {
         0x1e602008 | rn!($rn)
+    };
+
+    (fcsel d($rd:expr), d($rn:expr), d($rm:expr), eq) => {
+        0x1e600c00 | rd!($rd) | rn!($rn) | rm!($rm)
+    };
+
+    (fcsel d($rd:expr), d($rn:expr), d($rm:expr), ne) => {
+        0x1e601c00 | rd!($rd) | rn!($rn) | rm!($rm)
+    };
+
+    (fcsel d($rd:expr), d($rn:expr), d($rm:expr), lt) => {
+        0x1e60bc00 | rd!($rd) | rn!($rn) | rm!($rm)
+    };
+
+    (fcsel d($rd:expr), d($rn:expr), d($rm:expr), le) => {
+        0x1e60dc00 | rd!($rd) | rn!($rn) | rm!($rm)
+    };
+
+    (fcsel d($rd:expr), d($rn:expr), d($rm:expr), gt) => {
+        0x1e60cc00 | rd!($rd) | rn!($rn) | rm!($rm)
+    };
+
+    (fcsel d($rd:expr), d($rn:expr), d($rm:expr), ge) => {
+        0x1e60ac00 | rd!($rd) | rn!($rn) | rm!($rm)
     };
 
     // misc
@@ -471,12 +510,14 @@ macro_rules! arm {
     (ret) => { 0xd65f03c0 };
     (nop) => { 0x91000000 };
 
+    (fmov d($rd:expr), #0.0) => { 0x4f00e400 | rd!($rd) };  // alias for movi v(..), #0
     (fmov d($rd:expr), #0.5) => { 0x1e6c1000 | rd!($rd) };
     (fmov d($rd:expr), #1.0) => { 0x1e6e1000 | rd!($rd) };
     (fmov d($rd:expr), #2.0) => { 0x1e601000 | rd!($rd) };
     (fmov d($rd:expr), #-1.0) => { 0x1e7e1000 | rd!($rd) };
 
     (movi v($rd:expr).16b, #0) => { 0x4f00e400 | rd!($rd) };
+    (fmov q($rd:expr), #0.0) => { 0x4f00e400 | rd!($rd) };  // alias for movi v(..), #0
     (fmov q($rd:expr), #0.5) => { 0x6f03f400 | rd!($rd) };
     (fmov q($rd:expr), #1.0) => { 0x6f03f600 | rd!($rd) };
     (fmov q($rd:expr), #2.0) => { 0x6f00f400 | rd!($rd) };

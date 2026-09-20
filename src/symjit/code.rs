@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use num_complex::{Complex, ComplexFloat};
+use num_complex::Complex;
 use spec_math::cephes64;
 use std::ffi::c_void;
 use std::fmt;
@@ -55,6 +55,7 @@ pub enum Func {
         env: *const c_void,
     },
     App(Box<Applet>),
+    Recursive,
 }
 
 impl Func {
@@ -70,6 +71,7 @@ impl Func {
                 Some(f) => f as usize as u64,
                 None => 0,
             },
+            Func::Recursive => 0,
         }
     }
 }
@@ -349,7 +351,7 @@ impl VirtualTable {
 
     fn inv(z: Complex<f64>) -> Complex<f64> {
         if z.re.is_infinite() {
-            return Complex::ZERO;
+            Complex::ZERO
         } else {
             z.inv()
         }

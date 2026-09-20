@@ -38,6 +38,8 @@ pub enum UniOp {
     Half,
     IsZero,
     IsNotZero,
+    Sign,
+    Abs2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash)]
@@ -615,9 +617,25 @@ impl Mir {
         });
     }
 
+    pub fn sign(&mut self, dst: Reg, s1: Reg) {
+        self.push(Instruction::Uni {
+            op: UniOp::Sign,
+            dst,
+            s1,
+        });
+    }
+
     pub fn abs(&mut self, dst: Reg, s1: Reg) {
         self.push(Instruction::Uni {
             op: UniOp::Abs,
+            dst,
+            s1,
+        });
+    }
+
+    pub fn abs2(&mut self, dst: Reg, s1: Reg) {
+        self.push(Instruction::Uni {
+            op: UniOp::Abs2,
             dst,
             s1,
         });
@@ -1225,6 +1243,7 @@ impl Mir {
             UniOp::Neg => -s1,
             UniOp::Not => f64::from_bits(!s1.to_bits()),
             UniOp::Abs => s1.abs(),
+            UniOp::Abs2 => s1.abs().powi(2),
             UniOp::Root => s1.sqrt(),
             UniOp::RealRoot => s1.sqrt(),
             UniOp::Recip => 1.0 / s1,
@@ -1238,6 +1257,13 @@ impl Mir {
             UniOp::Half => s1 / 2.0,
             UniOp::IsZero => bool_to_f64(s1 == 0.0),
             UniOp::IsNotZero => bool_to_f64(s1 != 0.0),
+            UniOp::Sign => {
+                if s1 < 0.0 {
+                    -0.0
+                } else {
+                    0.0
+                }
+            }
         };
 
         Self::set(regs, dst, val);
@@ -1490,7 +1516,7 @@ impl Mir {
                             Self::set(regs, Reg::Ret, val.re);
                             Self::set(regs, Reg::Temp, val.im);
                         },
-                        Func::App(..) => unimplemented!(),
+                        Func::App(..) | Func::Recursive => unimplemented!(),
                     }
                 }
                 Instruction::Fused { op, dst, a, b, c } => {
@@ -1550,240 +1576,13 @@ impl Mir {
     }
 }
 
-/*
-// Funclet Section
-impl Mir {
-    fn try_funclet(
-        &self,
-        ir: &mut dyn Generator,
-        funclets: &mut HashSet<(FuncletOp, Vec<Reg>)>,
-        ins: &Instruction,
-    ) -> bool {
-        if !self.config.compress() || !self.config.is_complex() {
-            return false;
-        }
-
-        let support = ir.support_funclet();
-
-        match ins {
-            Instruction::Bi {
-                op: BinOp::Times,
-                dst,
-                s1,
-                s2,
-            } => {
-                if matches!(support, FuncletType::Real) {
-                    funclets.insert((FuncletOp::Times, vec![*dst, *s1, *s2]));
-                    let name = format!("times_{:?}_{:?}_{:?}", dst, s1, s2);
-                    ir.call_funclet(&name);
-                    true
-                } else {
-                    false
-                }
-            }
-            Instruction::Bi {
-                op: BinOp::Divide,
-                dst,
-                s1,
-                s2,
-            } => {
-                if matches!(support, FuncletType::Real) {
-                    funclets.insert((FuncletOp::Divide, vec![*dst, *s1, *s2]));
-                    let name = format!("divide_{:?}_{:?}_{:?}", dst, s1, s2);
-                    ir.call_funclet(&name);
-                    true
-                } else {
-                    false
-                }
-            }
-            Instruction::LoadMath {
-                op: ArithOp::Times,
-                dst,
-                s1,
-                loc,
-            } => {
-                if matches!(support, FuncletType::Real) {
-                    let s2 = Reg::Temp;
-                    match loc {
-                        Loc::Mem(idx) => ir.load_mem(s2, *idx),
-                        Loc::Stack(idx) => ir.load_stack(s2, *idx),
-                        Loc::Param(idx) => ir.load_param(s2, *idx),
-                    }
-                    funclets.insert((FuncletOp::Times, vec![*dst, *s1, s2]));
-                    let name = format!("times_{:?}_{:?}_{:?}", dst, s1, s2);
-                    ir.call_funclet(&name);
-                    true
-                } else {
-                    false
-                }
-            }
-            Instruction::LoadMath {
-                op: ArithOp::Divide,
-                dst,
-                s1,
-                loc,
-            } => {
-                if matches!(support, FuncletType::Real) {
-                    let s2 = Reg::Temp;
-                    match loc {
-                        Loc::Mem(idx) => ir.load_mem(s2, *idx),
-                        Loc::Stack(idx) => ir.load_stack(s2, *idx),
-                        Loc::Param(idx) => ir.load_param(s2, *idx),
-                    }
-                    funclets.insert((FuncletOp::Divide, vec![*dst, *s1, s2]));
-                    let name = format!("divide_{:?}_{:?}_{:?}", dst, s1, s2);
-                    ir.call_funclet(&name);
-                    true
-                } else {
-                    false
-                }
-            }
-            Instruction::Uni {
-                op: UniOp::Root,
-                dst,
-                s1,
-            } => {
-                if matches!(support, FuncletType::Real) {
-                    funclets.insert((FuncletOp::Root, vec![*dst, *s1]));
-                    let name = format!("root_{:?}_{:?}", dst, s1);
-                    ir.call_funclet(&name);
-                    true
-                } else {
-                    false
-                }
-            }
-            Instruction::ComplexBi {
-                op: ArithOp::Times,
-                xd,
-                yd,
-                x1,
-                y1,
-                x2,
-                y2,
-            } => {
-                if matches!(support, FuncletType::Complex) {
-                    funclets.insert((FuncletOp::TimesComplex, vec![*xd, *yd, *x1, *y1, *x2, *y2]));
-                    let name = format!(
-                        "times_complex_{:?}_{:?}_{:?}_{:?}_{:?}_{:?}",
-                        xd, yd, x1, y1, x2, y2
-                    );
-                    ir.call_funclet(&name);
-                    true
-                } else {
-                    false
-                }
-            }
-            Instruction::ComplexBi {
-                op: ArithOp::Divide,
-                xd,
-                yd,
-                x1,
-                y1,
-                x2,
-                y2,
-            } => {
-                if matches!(support, FuncletType::Complex) {
-                    funclets.insert((FuncletOp::DivideComplex, vec![*xd, *yd, *x1, *y1, *x2, *y2]));
-                    let name = format!(
-                        "divide_complex_{:?}_{:?}_{:?}_{:?}_{:?}_{:?}",
-                        xd, yd, x1, y1, x2, y2
-                    );
-                    ir.call_funclet(&name);
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
-    }
-
-    fn create_funclets(
-        &self,
-        ir: &mut dyn Generator,
-        funclets: HashSet<(FuncletOp, Vec<Reg>)>,
-    ) -> Result<()> {
-        if funclets.is_empty() {
-            return Ok(());
-        }
-
-        ir.branch("@funclets");
-
-        for f in funclets.iter() {
-            // println!("{:?}", &f);
-            match f {
-                (FuncletOp::Times, args) => {
-                    let dst = args[0];
-                    let s1 = args[1];
-                    let s2 = args[2];
-                    let name = format!("times_{:?}_{:?}_{:?}", dst, s1, s2);
-                    ir.set_label(&name);
-                    ir.times(dst, s1, s2);
-                    ir.ret();
-                }
-                (FuncletOp::Divide, args) => {
-                    let dst = args[0];
-                    let s1 = args[1];
-                    let s2 = args[2];
-                    let name = format!("divide_{:?}_{:?}_{:?}", dst, s1, s2);
-                    ir.set_label(&name);
-                    ir.divide(dst, s1, s2);
-                    ir.ret();
-                }
-                (FuncletOp::Root, args) => {
-                    let dst = args[0];
-                    let s1 = args[1];
-                    let name = format!("root_{:?}_{:?}", dst, s1);
-                    ir.set_label(&name);
-                    ir.root(dst, s1);
-                    ir.ret();
-                }
-                (FuncletOp::TimesComplex, args) => {
-                    let xd = args[0];
-                    let yd = args[1];
-                    let x1 = args[2];
-                    let y1 = args[3];
-                    let x2 = args[4];
-                    let y2 = args[5];
-                    let name = format!(
-                        "times_complex_{:?}_{:?}_{:?}_{:?}_{:?}_{:?}",
-                        xd, yd, x1, y1, x2, y2
-                    );
-                    ir.set_label(&name);
-                    ir.times_complex(xd, yd, x1, y1, x2, y2);
-                    ir.ret();
-                }
-                (FuncletOp::DivideComplex, args) => {
-                    let xd = args[0];
-                    let yd = args[1];
-                    let x1 = args[2];
-                    let y1 = args[3];
-                    let x2 = args[4];
-                    let y2 = args[5];
-                    let name = format!(
-                        "divide_complex_{:?}_{:?}_{:?}_{:?}_{:?}_{:?}",
-                        xd, yd, x1, y1, x2, y2
-                    );
-                    ir.set_label(&name);
-                    ir.divide_complex(xd, yd, x1, y1, x2, y2);
-                    ir.ret();
-                }
-            }
-        }
-
-        ir.set_label("@funclets");
-
-        Ok(())
-    }
-}
-*/
-
 impl Mir {
     fn rerun_uniop(ir: &mut dyn Generator, op: UniOp, dst: Reg, s1: Reg) {
         match op {
             UniOp::Neg => ir.neg(dst, s1),
             UniOp::Not => ir.not(dst, s1),
             UniOp::Abs => ir.abs(dst, s1),
+            UniOp::Abs2 => ir.abs2(dst, s1),
             UniOp::Root => ir.root(dst, s1),
             UniOp::RealRoot => ir.real_root(dst, s1),
             UniOp::Recip => ir.recip(dst, s1),
@@ -1803,6 +1602,7 @@ impl Mir {
                 ir.xor(Reg::Temp, Reg::Temp, Reg::Temp);
                 ir.neq(dst, s1, Reg::Temp);
             }
+            UniOp::Sign => ir.sign(dst, s1),
         };
     }
 
@@ -1914,13 +1714,15 @@ impl Mir {
                     } else {
                         let f = self.find_op(label).unwrap();
                         match f {
-                            Func::Unary(_) => ir.call(label, *num_args)?,
-                            Func::Binary(_) => ir.call(label, *num_args)?,
-                            Func::UnaryCplx(_) => ir.call_complex(label, *num_args)?,
-                            Func::BinaryCplx(_) => ir.call_complex(label, *num_args)?,
-                            Func::PairedUnary(_) => ir.call(label, *num_args)?,
-                            Func::Slice { .. } => ir.call(label, *num_args)?,
-                            Func::App { .. } => ir.call(label, *num_args)?,
+                            Func::Unary(_)
+                            | Func::Binary(_)
+                            | Func::PairedUnary(_)
+                            | Func::Slice { .. }
+                            | Func::App(_) => ir.call(label, *num_args)?,
+                            Func::UnaryCplx(_) | Func::BinaryCplx(_) => {
+                                ir.call_complex(label, *num_args)?
+                            }
+                            Func::Recursive => ir.call("@self", *num_args)?,
                         }
                     }
                 }
