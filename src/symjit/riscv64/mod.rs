@@ -1,6 +1,9 @@
 #[macro_use]
 mod macros;
 
+#[cfg(test)]
+mod tests;
+
 use super::assembler::{Assembler, Jumper};
 use super::code::Func;
 use super::config::{Config, ABI_AREA};
@@ -599,6 +602,10 @@ impl Generator for RiscV {
     fn abs2(&mut self, dst: Reg, s1: Reg) {
         self.times(dst, s1, s1);
     }
+
+    fn times_i(&mut self, _dst: Reg, _s1: Reg) {}
+
+    fn times_neg_i(&mut self, _dst: Reg, _s1: Reg) {}
 
     fn root(&mut self, dst: Reg, s1: Reg) {
         self.emit(rvv! {fsqrt.d f(ϕ(dst)), f(ϕ(s1))});

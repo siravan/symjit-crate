@@ -129,8 +129,8 @@ impl Builder {
                     0.5 => return self.create_unary(Operation::new("root"), left),
                     ONE_THIRD => return self.add_unary(Operation::new("cbrt"), left),
                     1.5 => {
-                        let arg = self.create_unary(Operation::new("cube"), left)?;
-                        return self.create_unary(Operation::new("root"), arg);
+                        let arg = self.create_unary(Operation::new("root"), left.clone())?;
+                        return self.create_binary(Operation::Times, left, arg);
                     }
                     _ => {}
                 }
@@ -272,6 +272,18 @@ impl Builder {
                 if left.is_unary("conjugate") && left.hashof_arg().unwrap() == right.hashof() =>
             {
                 self.create_unary(Operation::new("abs2"), right)?
+            }
+            Operation::Times if right.is_imaginary_unit() => {
+                self.create_unary(Operation::new("times_i"), left)?
+            }
+            Operation::Times if left.is_imaginary_unit() => {
+                self.create_unary(Operation::new("times_i"), right)?
+            }
+            Operation::Times if right.is_neg_imaginary_unit() => {
+                self.create_unary(Operation::new("times_neg_i"), left)?
+            }
+            Operation::Times if left.is_neg_imaginary_unit() => {
+                self.create_unary(Operation::new("times_neg_i"), right)?
             }
             Operation::Divide if right.is_unary("recip") => {
                 self.create_binary(Operation::Times, left, right.arg().unwrap())?

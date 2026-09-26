@@ -223,38 +223,40 @@ impl Node {
         match self {
             Self::Void => "?".into(),
             Self::Var { .. } => "X".into(),
-            /*
-            Self::Var { sym } => match sym.borrow().loc {
-                Loc::Stack(_) => "x".into(),
-                Loc::Param(_) => "p".into(),
-                Loc::Mem(_) => "q".into(),
-            },
-            */
             Self::Const { idx, .. } => format!("C[{}]", idx),
-            Self::Unary { op, arg, .. } => {
-                format!("{}[{}]", arg.topology(), op.as_str())
+            Self::Unary { op, arg, power, .. } => {
+                if *power == 1 {
+                    format!("{}U[{}]", arg.topology(), op.as_str())
+                } else {
+                    format!("{}U[{}^{}]", arg.topology(), op.as_str(), power)
+                }
             }
             Self::Binary {
-                op, left, right, ..
+                op,
+                left,
+                right,
+                power,
+                cond,
+                ..
             } => {
                 let l = left.topology();
                 let r = right.topology();
 
-                let op: String = match op {
-                    Operation::Plus => "+".into(),
-                    Operation::Minus => "-".into(),
-                    Operation::Times => "*".into(),
-                    Operation::Divide => "/".into(),
-                    op => format!("[{}]", op.as_str()),
-                };
-
-                /*
-                if (op == "+" || op == "*") && l < r {
-                    (l, r) = (r, l);
+                match op {
+                    Operation::Plus => format!("{}{}+", l, r),
+                    Operation::Minus => format!("{}{}-", l, r),
+                    Operation::Times => format!("{}{}*", l, r),
+                    Operation::Divide => format!("{}{}/", l, r),
+                    op => {
+                        if !cond.is_none() {
+                            format!("{}{}[{}?{:?}]", l, r, op.as_str(), cond.as_ref().unwrap())
+                        } else if *power == 1 {
+                            format!("{}{}B[{}]", l, r, op.as_str())
+                        } else {
+                            format!("{}{}B[{}^{}]", l, r, op.as_str(), power)
+                        }
+                    }
                 }
-                */
-
-                format!("{}{}{}", l, r, op)
             }
         }
     }
@@ -320,6 +322,8 @@ impl Node {
                 "not" => mir.not(reg(dst), reg(r)),
                 "abs" => mir.abs(reg(dst), reg(r)),
                 "abs2" => mir.abs2(reg(dst), reg(r)),
+                "times_i" => mir.times_i(reg(dst), reg(r)),
+                "times_neg_i" => mir.times_neg_i(reg(dst), reg(r)),
                 "root" => mir.root(reg(dst), reg(r)),
                 "real_root" => mir.real_root(reg(dst), reg(r)),
                 "square" => mir.square(reg(dst), reg(r)),
@@ -595,6 +599,26 @@ impl Node {
         if let Node::Unary { op, .. } = self {
             return op.as_str() == op_;
         };
+        false
+    }
+
+    pub fn is_imaginary_unit(&self) -> bool {
+        if let Node::Binary {
+            op, left, right, ..
+        } = self
+        {
+            return op.as_str() == "complex" && left.is_const(0.0) && right.is_const(1.0);
+        }
+        false
+    }
+
+    pub fn is_neg_imaginary_unit(&self) -> bool {
+        if let Node::Binary {
+            op, left, right, ..
+        } = self
+        {
+            return op.as_str() == "complex" && left.is_const(0.0) && right.is_const(-1.0);
+        }
         false
     }
 

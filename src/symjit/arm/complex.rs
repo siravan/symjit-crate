@@ -260,9 +260,9 @@ impl Generator for ArmComplexGenerator {
     }
 
     fn sign(&mut self, dst: Reg, s1: Reg) {
-        self.emit(arm! {fmov q(ϕ(Reg::Temp)), #0.0});
-        self.emit(arm! {fneg q(ϕ(Reg::Temp)), q(ϕ(Reg::Temp))});
-        self.and(dst, s1, Reg::Temp);
+        self.emit(arm! {fmov q(T2), #0.0});
+        self.emit(arm! {fneg q(T2), q(T2)});
+        self.emit(arm! {and v(ϕ(dst)).16b, v(ϕ(s1)).16b, v(T2).16b});
     }
 
     fn abs(&mut self, dst: Reg, s1: Reg) {
@@ -276,6 +276,16 @@ impl Generator for ArmComplexGenerator {
         self.emit(arm! {fmul q(T2), q(ϕ(s1)), q(ϕ(s1))});
         self.emit(arm! {eor v(ϕ(dst)).16b, v(ϕ(dst)).16b, v(ϕ(dst)).16b});
         self.emit(arm! {faddp d(ϕ(dst)), q(T2)});
+    }
+
+    fn times_i(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fneg q(T1), q(ϕ(s1))});
+        self.emit(arm! {ext q(ϕ(dst)), q(T1), q(ϕ(s1)), #8});
+    }
+
+    fn times_neg_i(&mut self, dst: Reg, s1: Reg) {
+        self.emit(arm! {fneg d(T1), d(ϕ(s1))});
+        self.emit(arm! {ext q(ϕ(dst)), q(ϕ(s1)), q(T1), #8});
     }
 
     fn root(&mut self, dst: Reg, s1: Reg) {
@@ -339,8 +349,8 @@ impl Generator for ArmComplexGenerator {
     }
 
     fn half(&mut self, dst: Reg, s1: Reg) {
-        self.emit(arm! {fmov q(TEMP), #0.5});
-        self.emit(arm! {fmul q(ϕ(dst)), q(ϕ(s1)), q(TEMP)});
+        self.emit(arm! {fmov q(T2), #0.5});
+        self.emit(arm! {fmul q(ϕ(dst)), q(ϕ(s1)), q(T2)});
     }
 
     fn round(&mut self, dst: Reg, s1: Reg) {
@@ -360,8 +370,8 @@ impl Generator for ArmComplexGenerator {
     }
 
     fn frac(&mut self, dst: Reg, s1: Reg) {
-        self.floor(Reg::Temp, s1);
-        self.minus(dst, s1, Reg::Temp);
+        self.emit(arm! {frintm q(T2), q(ϕ(s1))});
+        self.emit(arm! {fsub q(ϕ(dst)), q(ϕ(s1)), q(T2)});
     }
 
     fn plus(&mut self, dst: Reg, s1: Reg, s2: Reg) {
@@ -505,7 +515,7 @@ impl Generator for ArmComplexGenerator {
         self.emit(arm! {fcmeq q(ϕ(dst)), q(ϕ(s1)), q(ϕ(s2))});
         self.emit(arm! {not v(ϕ(dst)).16b, v(ϕ(dst)).16b});
         self.emit(arm! {ext q(T1), q(ϕ(dst)), q(ϕ(dst)), #8});
-        self.emit(arm! {and v(ϕ(dst)).16b, v(ϕ(dst)).16b, v(T1).16b});
+        self.emit(arm! {orr v(ϕ(dst)).16b, v(ϕ(dst)).16b, v(T1).16b});
     }
 
     fn and(&mut self, dst: Reg, s1: Reg, s2: Reg) {
@@ -588,7 +598,7 @@ impl Generator for ArmComplexGenerator {
             self.minus(dst, s3, Reg::Temp);
         } else {
             self.times(Reg::Ret, s1, s2);
-            self.minus(dst, Reg::Ret, s3);
+            self.minus(dst, s3, Reg::Ret);
         }
     }
 

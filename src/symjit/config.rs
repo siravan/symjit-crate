@@ -528,7 +528,7 @@ impl Config {
 
     pub fn available_registers(&self) -> u8 {
         if (self.is_arm64() || self.is_riscv64()) && self.opt_level() == 3 && !self.compress() {
-            32
+            29 // three scratch registers
         } else {
             16
         }
@@ -946,6 +946,8 @@ const UNARY: &[&str] = &[
     "conjugate",
     "iszero",
     "isnotzero",
+    "times_i",
+    "times_neg_i",
 ];
 
 // the list of intrinsic binary ops, i.e., operations that can be implemented directly in
@@ -1078,7 +1080,7 @@ impl Storage for Config {
             opt,
             ty,
             df: config.df.clone(),
-            stack: DEFAULT_STACK_LIMIT,
+            stack: DEFAULT_STACK_LIMIT, // todo: save and load stack_limit
         })
     }
 }

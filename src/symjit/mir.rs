@@ -40,6 +40,8 @@ pub enum UniOp {
     IsNotZero,
     Sign,
     Abs2,
+    TimesI,
+    TimesNegI,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash)]
@@ -636,6 +638,22 @@ impl Mir {
     pub fn abs2(&mut self, dst: Reg, s1: Reg) {
         self.push(Instruction::Uni {
             op: UniOp::Abs2,
+            dst,
+            s1,
+        });
+    }
+
+    pub fn times_i(&mut self, dst: Reg, s1: Reg) {
+        self.push(Instruction::Uni {
+            op: UniOp::TimesI,
+            dst,
+            s1,
+        });
+    }
+
+    pub fn times_neg_i(&mut self, dst: Reg, s1: Reg) {
+        self.push(Instruction::Uni {
+            op: UniOp::TimesNegI,
             dst,
             s1,
         });
@@ -1264,6 +1282,7 @@ impl Mir {
                     0.0
                 }
             }
+            UniOp::TimesI | UniOp::TimesNegI => 0.0,
         };
 
         Self::set(regs, dst, val);
@@ -1583,6 +1602,8 @@ impl Mir {
             UniOp::Not => ir.not(dst, s1),
             UniOp::Abs => ir.abs(dst, s1),
             UniOp::Abs2 => ir.abs2(dst, s1),
+            UniOp::TimesI => ir.times_i(dst, s1),
+            UniOp::TimesNegI => ir.times_neg_i(dst, s1),
             UniOp::Root => ir.root(dst, s1),
             UniOp::RealRoot => ir.real_root(dst, s1),
             UniOp::Recip => ir.recip(dst, s1),
@@ -2155,6 +2176,7 @@ impl Mir {
         if let Instruction::Save { .. } = *q0 {
             if let Instruction::Load { .. } = *q1 {
                 if let Instruction::Save { .. } = *q2 {
+                    code.push(q0);
                     if q0.src() == Reg::Ret && q0.loc() == q1.loc() && q1.dst() == q2.src() {
                         return Some(Instruction::Save {
                             src: Reg::Ret,
@@ -2531,10 +2553,7 @@ impl Mir {
         q1: &Instruction,
         q2: &Instruction,
     ) -> Option<Instruction> {
-        // TODO: fix the FMA bug for complex noted on `runtests complex`
-        if !self.config.fastmath()
-        /*|| self.config.is_complex()*/
-        {
+        if !self.config.fastmath() {
             return None;
         }
 
@@ -2547,8 +2566,9 @@ impl Mir {
                     op: BinOp::Plus, ..
                 } = *q2
                 {
-                    if (q2.s1() == q0.dst() && q2.s2() == q1.dst())
-                        || (q2.s1() == q1.dst() && q2.s2() == q0.dst())
+                    if ((q2.s1() == q0.dst() && q2.s2() == q1.dst())
+                        || (q2.s1() == q1.dst() && q2.s2() == q0.dst()))
+                        && (q0.s1() != Reg::Temp && q0.s2() != Reg::Temp)
                     {
                         code.push(&Instruction::LoadConst {
                             dst: Reg::Temp,
@@ -2575,8 +2595,9 @@ impl Mir {
                     op: BinOp::Plus, ..
                 } = *q2
                 {
-                    if (q2.s1() == q0.dst() && q2.s2() == q1.dst())
-                        || (q2.s1() == q1.dst() && q2.s2() == q0.dst())
+                    if ((q2.s1() == q0.dst() && q2.s2() == q1.dst())
+                        || (q2.s1() == q1.dst() && q2.s2() == q0.dst()))
+                        && (q0.s1() != Reg::Temp && q0.s2() != Reg::Temp)
                     {
                         code.push(&Instruction::Load {
                             dst: Reg::Temp,
@@ -2603,7 +2624,10 @@ impl Mir {
                     op: BinOp::Minus, ..
                 } = *q2
                 {
-                    if q2.s1() == q0.dst() && q2.s2() == q1.dst() {
+                    if q2.s1() == q0.dst()
+                        && q2.s2() == q1.dst()
+                        && (q0.s1() != Reg::Temp && q0.s2() != Reg::Temp)
+                    {
                         code.push(&Instruction::LoadConst {
                             dst: Reg::Temp,
                             idx,
@@ -2615,7 +2639,10 @@ impl Mir {
                             b: q0.s2(),
                             c: Reg::Temp,
                         });
-                    } else if q2.s1() == q1.dst() && q2.s2() == q0.dst() {
+                    } else if q2.s1() == q1.dst()
+                        && q2.s2() == q0.dst()
+                        && (q0.s1() != Reg::Temp && q0.s2() != Reg::Temp)
+                    {
                         code.push(&Instruction::LoadConst {
                             dst: Reg::Temp,
                             idx,
@@ -2641,7 +2668,10 @@ impl Mir {
                     op: BinOp::Minus, ..
                 } = *q2
                 {
-                    if q2.s1() == q0.dst() && q2.s2() == q1.dst() {
+                    if q2.s1() == q0.dst()
+                        && q2.s2() == q1.dst()
+                        && (q0.s1() != Reg::Temp && q0.s2() != Reg::Temp)
+                    {
                         code.push(&Instruction::Load {
                             dst: Reg::Temp,
                             loc: q1.loc(),
@@ -2653,7 +2683,10 @@ impl Mir {
                             b: q0.s2(),
                             c: Reg::Temp,
                         });
-                    } else if q2.s1() == q1.dst() && q2.s2() == q0.dst() {
+                    } else if q2.s1() == q1.dst()
+                        && q2.s2() == q0.dst()
+                        && (q0.s1() != Reg::Temp && q0.s2() != Reg::Temp)
+                    {
                         code.push(&Instruction::Load {
                             dst: Reg::Temp,
                             loc: q1.loc(),
