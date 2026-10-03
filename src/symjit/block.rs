@@ -27,7 +27,7 @@ pub struct Block {
 
 impl Block {
     pub fn new(config: Config) -> Block {
-        let sym_table = SymbolTable::new(config.is_complex());
+        let sym_table = SymbolTable::new(&config);
 
         let mut args: Vec<Rc<RefCell<Symbol>>> = Vec::new();
         for i in 0..SLICE_CAP {

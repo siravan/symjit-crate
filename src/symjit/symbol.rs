@@ -4,7 +4,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-use super::config::{SLICE_CAP, SPILL_AREA};
+use super::config::{Config, SPILL_AREA};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Loc {
@@ -78,7 +78,7 @@ impl fmt::Debug for SymbolTable {
 }
 
 impl SymbolTable {
-    pub fn new(is_complex: bool) -> SymbolTable {
+    pub fn new(config: &Config) -> SymbolTable {
         let mut s = SymbolTable {
             syms: HashMap::new(),
             num_stack: 0,
@@ -99,11 +99,12 @@ impl SymbolTable {
             s.add_stack(&format!("μ{}", i));
         }
 
-        if is_complex {
+        if config.is_complex() {
             s.slot_size = 2;
         }
 
-        for i in 0..SLICE_CAP {
+        // for i in 0..config.num_args() {
+        for i in 0..2048 {
             s.add_stack(&format!("__Arg{}", i));
         }
 

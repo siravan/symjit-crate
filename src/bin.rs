@@ -381,6 +381,32 @@ fn test_zero_params() -> Result<()> {
     Ok(())
 }
 
+fn test_hyperbolic() -> Result<()> {
+    let mut config = Config::default();
+    config.set_complex(true);
+
+    let mut t = Translator::new(config);
+    t.set_num_params(1);
+    t.append_fun(&Slot::Temp(0), "tanh", &[Slot::Param(0)], false)?;
+    t.append_fun(&Slot::Temp(1), "coth", &[Slot::Param(0)], false)?;
+    t.append_fun(&Slot::Temp(2), "sech", &[Slot::Param(0)], false)?;
+    t.append_fun(&Slot::Temp(3), "csch", &[Slot::Param(0)], false)?;
+    t.append_add(
+        &Slot::Out(0),
+        &[Slot::Temp(0), Slot::Temp(1), Slot::Temp(2), Slot::Temp(3)],
+        0,
+    )?;
+
+    let app = t.compile().unwrap().seal().unwrap();
+    let args = [Complex::new(1000000000000.0, 0.0); 1];
+    let mut outs = [Complex::new(0.0, 0.0); 1];
+
+    app.evaluate(&args, &mut outs);
+    assert_eq!(outs[0], Complex::new(2.0, 0.0));
+
+    Ok(())
+}
+
 fn pass(what: &str) {
     println!("**** test {:?} passed. ****", what);
 }
@@ -425,6 +451,9 @@ pub fn main() -> Result<()> {
 
     test_zero_params()?;
     pass("zero params");
+
+    test_hyperbolic()?;
+    pass("hyperbolic");
 
     Ok(())
 }

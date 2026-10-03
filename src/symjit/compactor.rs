@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
-use super::config::{Config, SLICE_CAP, SPILL_AREA};
+use super::config::Config;
 use super::mir::{Instruction, Mir};
 use super::serializer::MirWriter;
 use super::symbol::Loc;
@@ -21,12 +21,7 @@ pub struct Compactor {
 
 impl Compactor {
     pub fn new(config: Config) -> Compactor {
-        let fixed = if config.is_complex() {
-            (2 * SLICE_CAP + SPILL_AREA) as u32
-        } else {
-            (SLICE_CAP + SPILL_AREA) as u32
-        };
-
+        let fixed = config.fixed();
         Compactor {
             config,
             code: MirWriter::new(),

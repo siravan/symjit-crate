@@ -4,16 +4,12 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::rc::Rc;
 
-use super::config::{Config, SLICE_CAP};
+use super::config::{Config, COMPRESSED_ARGS_CAP};
 use super::mir::Mir;
 use super::node::Node;
 use super::symbol::Symbol;
 use super::utils::reg;
 use super::utils::Reg;
-
-// LoadArgs/SaveArgs encode the count in six bits; the high bits are flags.
-// This limit is separate from the external-function argument capacity.
-const COMPRESSED_ARGS_CAP: usize = 0x3f;
 
 #[derive(Clone, Debug)]
 pub struct Subroutine {
@@ -75,7 +71,7 @@ impl Topology {
         for (k, v) in self.counts.iter() {
             let nx = k.chars().filter(|c| *c == 'X').count();
 
-            if (3..=SLICE_CAP.min(COMPRESSED_ARGS_CAP)).contains(&nx) && *v >= 3 {
+            if (3..COMPRESSED_ARGS_CAP).contains(&nx) && *v >= 3 {
                 self.subs.insert(
                     k.clone(),
                     Subroutine {

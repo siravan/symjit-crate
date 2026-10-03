@@ -1,6 +1,25 @@
 use anyhow::Result;
 pub use num_complex::{Complex, ComplexFloat};
+use serde::de::Expected;
 use symjit::{Composer, Config, Defuns, Slot, Translator};
+
+fn test_simple() -> Result<()> {
+    let mut config = Config::default();
+    config.set_complex(false);
+
+    println!("before new");
+    let mut ev = Translator::new(config);
+    ev.set_num_params(2);
+    ev.append_add(&Slot::Out(0), &[Slot::Param(0), Slot::Param(1)], 0)?;
+    println!("before compiling");
+    let f = ev.compile()?.seal()?;
+
+    let mut outs = [0.0];
+    f.evaluate(&[2.0, 5.0], &mut outs);
+
+    assert_eq!(outs[0], 7.0);
+    Ok(())
+}
 
 fn compile_external_evaluators(direct: bool, complex: bool) -> Result<symjit::Application> {
     let mut config = Config::default();
@@ -157,11 +176,64 @@ fn test_factorial() -> Result<()> {
     Ok(())
 }
 
+fn test_args(num_args: usize) -> Result<()> {
+    let mut config = Config::default();
+    config.set_complex(false);
+    let mut ev = Translator::new(config);
+
+    ev.set_num_params(num_args);
+    ev.append_constant(Complex::new(0.0, 0.0))?;
+    ev.append_assign(&Slot::Temp(0), &Slot::Const(0))?;
+
+    for i in 0..num_args {
+        ev.append_add(&Slot::Temp(i + 1), &[Slot::Temp(i), Slot::Param(i)], 0)?;
+    }
+
+    ev.append_assign(&Slot::Out(0), &Slot::Temp(num_args))?;
+    let f = ev.compile()?.seal()?;
+
+    /* ***************************************************** */
+
+    let mut df = Defuns::new();
+    df.add_applet("f", f);
+
+    let mut config = Config::default();
+    config.set_complex(false);
+    config.set_direct(false);
+    config.set_defuns(df);
+    config.set_num_args(1000);
+
+    let mut ev = Translator::new(config);
+
+    ev.set_num_params(0);
+    let mut args = Vec::new();
+
+    for i in 0..num_args {
+        ev.append_constant(Complex::new((i * i) as f64, 0.0))?;
+        ev.append_assign(&Slot::Temp(i), &Slot::Const(i))?;
+        args.push(Slot::Temp(i));
+    }
+
+    ev.append_fun(&Slot::Out(0), "f", &args, false)?;
+    let app = ev.compile()?.seal()?;
+
+    let mut outs = [0.0];
+    let expected = (num_args * (num_args - 1) * (2 * num_args - 1) / 6) as f64;
+
+    app.evaluate(&[], &mut outs);
+
+    assert_eq!(outs[0], expected);
+    Ok(())
+}
+
 fn pass(what: &str) {
     println!("**** test {:?} passed. ****", what);
 }
 
 pub fn main() -> Result<()> {
+    test_simple()?;
+    pass("simple");
+
     test_external_evaluators_real()?;
     pass("external real evaluator");
 
@@ -176,6 +248,9 @@ pub fn main() -> Result<()> {
 
     test_factorial()?;
     pass("test factorial");
+
+    test_args(100)?;
+    pass("test args");
 
     Ok(())
 }
