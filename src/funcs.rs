@@ -201,7 +201,7 @@ fn test_args(num_args: usize) -> Result<()> {
     config.set_complex(false);
     config.set_direct(false);
     config.set_defuns(df);
-    config.set_num_args(1000);
+    config.set_num_args(num_args as u32);
 
     let mut ev = Translator::new(config);
 
@@ -249,7 +249,7 @@ pub fn main() -> Result<()> {
     test_factorial()?;
     pass("test factorial");
 
-    test_args(100)?;
+    test_args(1000)?;
     pass("test args");
 
     Ok(())
