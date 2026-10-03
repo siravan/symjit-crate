@@ -103,8 +103,7 @@ impl SymbolTable {
             s.slot_size = 2;
         }
 
-        // for i in 0..config.num_args() {
-        for i in 0..2048 {
+        for i in 0..config.num_args() {
             s.add_stack(&format!("__Arg{}", i));
         }
 
