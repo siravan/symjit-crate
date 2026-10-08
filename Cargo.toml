@@ -45,6 +45,8 @@ selinux-fix = ["memmap2"]
 default = ["symbolica"]
 symbolica = []
 libm = []
+obj = []
+wasm = []
 
 [lib]
 path = "src/lib.rs"
