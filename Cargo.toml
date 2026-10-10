@@ -45,17 +45,7 @@ selinux-fix = ["memmap2"]
 default = []
 
 [lib]
-path = "src/lib.rs"
+path = "rust/lib.rs"
 crate-type = ["rlib"]
 
-[[bin]]
-name = "test"
-path = "src/bin.rs"
 
-[[bin]]
-name = "kernels"
-path = "src/kernels.rs"
-
-[[bin]]
-name = "profiler"
-path = "src/profile.rs"
