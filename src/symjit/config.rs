@@ -61,6 +61,8 @@ pub struct Config {
     pub df: Option<Arc<Defuns>>,
     pub stack: usize,
     pub args: u32,
+    /// kernels for relocatable object files (not saved; see `is_relocatable`)
+    pub reloc: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -183,7 +185,7 @@ impl std::fmt::Debug for Config {
 
         write!(
             f,
-            "opt_level = {}, stack limit = {}, num_args = {}",
+            "opt_level = {}, stack limit = {}, num_args = {}}}",
             self.opt_level(),
             self.stack_limit(),
             self.num_args()
@@ -201,6 +203,7 @@ impl Config {
             df: None,
             stack: DEFAULT_STACK_LIMIT,
             args: COMPRESSED_ARGS_CAP as u32,
+            reloc: false,
         })
     }
 
@@ -209,6 +212,7 @@ impl Config {
             "bytecode" => CompilerType::ByteCode,
             "arm" => CompilerType::Arm,
             "riscv" => CompilerType::RiscV,
+            "wasm" => CompilerType::Wasm,
             "amd" => CompilerType::Amd,
             "amd-avx" => CompilerType::AmdAVX,
             "amd-sse" => CompilerType::AmdSSE,
@@ -269,6 +273,7 @@ impl Config {
             CompilerType::ByteCode => "bytecode",
             CompilerType::Arm => "arm",
             CompilerType::RiscV => "riscv",
+            CompilerType::Wasm => "wasm",
             CompilerType::Amd => "amd",
             CompilerType::AmdAVX => "amd-avx",
             CompilerType::AmdSSE => "amd-sse",
@@ -380,6 +385,10 @@ impl Config {
         self.is_amd64() && cfg!(target_family = "windows")
     }
 
+    pub fn is_wasm(&self) -> bool {
+        matches!(self.ty, CompilerType::Wasm)
+    }
+
     pub fn is_bytecode(&self) -> bool {
         matches!(self.ty, CompilerType::ByteCode)
     }
@@ -425,7 +434,8 @@ impl Config {
     }
 
     pub fn compress(&self) -> bool {
-        self.test(COMPRESS)
+        // compression mode relies on subroutines, which the wasm backend lacks
+        self.test(COMPRESS) && !self.is_wasm()
     }
 
     pub fn direct(&self) -> bool {
@@ -502,6 +512,18 @@ impl Config {
         self.args
     }
 
+    /// Kernels for relocatable object files: calls to math functions are direct calls to
+    /// the C library, recorded as relocations, instead of going through a table of the
+    /// addresses of symjit's own functions (see `VirtualTable::c_name`).
+    pub fn is_relocatable(&self) -> bool {
+        self.reloc
+    }
+
+    #[cfg(feature = "obj")]
+    pub fn set_relocatable(&mut self, reloc: bool) {
+        self.reloc = reloc;
+    }
+
     pub fn compiler_type(&self) -> CompilerType {
         if self.has_avx() {
             CompilerType::AmdAVX
@@ -513,6 +535,8 @@ impl Config {
             CompilerType::Arm
         } else if self.is_riscv64() {
             CompilerType::RiscV
+        } else if self.is_wasm() {
+            CompilerType::Wasm
         } else if self.is_bytecode() {
             CompilerType::ByteCode
         } else if self.is_debug() {
@@ -558,6 +582,14 @@ impl Config {
         }
     }
 
+    /// A function defined by the user (`defuns`), which may shadow a built-in one.
+    pub fn is_user_func(&self, op: &str) -> bool {
+        match &self.df {
+            Some(df) => df.funcs.contains_key(op),
+            None => false,
+        }
+    }
+
     pub fn is_external_func(&self, op: &str) -> bool {
         if op == "@self" {
             true
@@ -569,11 +601,16 @@ impl Config {
         }
     }
 
+    /// Functions called with the kernel convention (arguments in the `__Arg` stack
+    /// slots): inner applets and recursive calls (by name, or as `@self`).
     pub fn is_kernel_func(&self, op: &str) -> bool {
         if op == "@self" {
             true
         } else if let Some(df) = &self.df {
-            matches!(df.funcs.get(op), Some(Func::App { .. }))
+            matches!(
+                df.funcs.get(op),
+                Some(Func::App { .. }) | Some(Func::Recursive)
+            )
         } else {
             false
         }
@@ -1070,6 +1107,7 @@ impl Storage for Config {
             CompilerType::RiscV => 5,
             CompilerType::ByteCode => 6,
             CompilerType::Debug => 7,
+            CompilerType::Wasm => 8,
         };
 
         let val: usize = (self.opt as usize) | (ty << 32);
@@ -1117,6 +1155,7 @@ impl Storage for Config {
             5 => CompilerType::RiscV,
             6 => CompilerType::ByteCode,
             7 => CompilerType::Debug,
+            8 => CompilerType::Wasm,
             _ => return Err(anyhow!("invalid compiler type value.")),
         };
 
@@ -1126,6 +1165,7 @@ impl Storage for Config {
             df: config.df.clone(),
             stack,
             args,
+            reloc: false,
         })
     }
 }
