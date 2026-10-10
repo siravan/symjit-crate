@@ -1128,12 +1128,7 @@ impl IndirectTranslator {
         }
         let mut args = v;
 
-        // kernel functions (recursive calls, applets) take their arguments in the
-        // `__Arg` slots, not in registers, even when named `composer_*`
-        let by_register = !self.config.is_kernel_func(op)
-            && (VirtualTable::from_str(op).is_ok() || op.starts_with("composer_"));
-
-        if by_register {
+        if VirtualTable::from_str(op).is_ok() || op.starts_with("composer_") {
             if n == 1 {
                 let rhs = self.unary_node(op, args.remove(0))?;
                 self.assign(lhs, rhs)?;

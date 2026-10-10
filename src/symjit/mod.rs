@@ -331,11 +331,6 @@ mod utils;
 
 #[allow(non_upper_case_globals)]
 mod riscv64;
-#[cfg(feature = "wasm")]
-mod wasm;
-// object files (`Application::write_obj`)
-#[cfg(feature = "obj")]
-mod linker;
 
 use model::{CellModel, Program};
 
@@ -666,7 +661,6 @@ pub unsafe extern "C" fn get_config(q: *const CompilerResult) -> usize {
                 CompilerType::RiscV => 5,
                 CompilerType::ByteCode => 6,
                 CompilerType::Debug => 7,
-                CompilerType::Wasm => 8,
             };
 
             (config.opt as usize) | (ty << 32)
