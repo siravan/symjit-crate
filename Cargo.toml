@@ -1,6 +1,6 @@
 [package]
 name = "symjit"
-version = "2.23.0"
+version = "2.27.1"
 edition = "2021"
 authors = ["Shahriar Iravanian <siravan@svtsim.com>"]
 license = "MIT"
@@ -25,7 +25,6 @@ region = "3.0.2"
 wasmtime-jit-icache-coherence = "34.0"
 rayon = "1.1"
 spec_math = "0.1.6"
-# petgraph= "0.8.3"
 hashbrown = "0.16.0"
 num-complex = "0.4.6"
 num-traits = "0.2"
@@ -36,13 +35,18 @@ wide = "1.1"
 toml= "1.1"
 hugepage-rs = "0.1"
 lazy_static = "1.5"
+corosensei = { version = "0.3.4", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Memory"] }
 
 [features]
 selinux-fix = ["memmap2"]
-default = []
+default = ["async"]
+symbolica = []
+libm = []
+async = ["dep:corosensei"]
+
 
 [lib]
 path = "rust/lib.rs"
