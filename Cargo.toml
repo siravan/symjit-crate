@@ -1,6 +1,6 @@
 [package]
 name = "symjit"
-version = "2.27.2"
+version = "2.27.3"
 edition = "2021"
 authors = ["Shahriar Iravanian <siravan@svtsim.com>"]
 license = "MIT"
@@ -46,6 +46,7 @@ default = ["async"]
 symbolica = []
 libm = []
 async = ["dep:corosensei"]
+sympy = []
 
 
 [lib]
